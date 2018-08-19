@@ -33,6 +33,7 @@ class actorNetwork() :
         with tf.variable_scope('actor') :
             self.inputs, self.out = self.create_actor_network()
 
+
     def create_actor_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
 
@@ -68,7 +69,44 @@ class actorNetwork() :
         action = postprocessing(s, a[0][0], a[0][1])
         return action
 
+###############################################################
+
 class criticNetwork(object):
 
-    def __init__(self):
-        pass
+    def __init__(self, sess, screen_size):
+        self.sess =sess
+        self.screen_size = screen_size
+
+        with tf.variable_scope('critic') :
+            self.inputs, self.out = self.create_critic_network()
+
+    def create_critic_network(self):
+        inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
+
+        conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
+                                 activation=tf.nn.relu)
+        conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
+                                 activation=tf.nn.relu)
+        conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
+                                 activation=tf.nn.relu)
+
+        conv_flat = tf.layers.flatten(conv3)
+
+        w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32,
+                             initializer=tf.random_uniform_initializer(-0.3, 0.3))
+        l1 = tf.matmul(conv_flat, w1)
+        l1 = tf.nn.relu(l1)
+
+        w2 = tf.get_variable(name='w2', shape=[500, 1], dtype=tf.float32,
+                             initializer=tf.random_uniform_initializer(-0.3, 0.3))
+        out = tf.matmul(l1, w2)
+
+        return inputs, out
+
+    def predict(self, s):
+
+        s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
+        q = self.sess.run(self.out, feed_dict={
+            self.inputs: s
+        })
+        return q
