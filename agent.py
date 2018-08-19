@@ -3,23 +3,29 @@ import tensorflow as tf
 import numpy as np
 
 def postprocessing(s, x, y) :
-    if np.ndim(s) > 1 :
-        s = s[:,:,:,-1]
-        s = np.reshape(s, (64, 64))
 
-    action = actions.FUNCTIONS.no_op()
+    s = s[:,:,:,-1]
+    dim = np.shape(s)[0]
+    # 1개 들어올때만 생각했고 batch로 들어올때 생각을 못함
 
-    if x != 0 and y != 0:
-        if s[x][y] == 0:
-            action = actions.FUNCTIONS.Move_screen("now", (x, y))
+    y_i = []
+    for i in range(dim) :
+        action = actions.FUNCTIONS.no_op()
+        if x != 0 and y != 0:
+            if s[i][x][y] == 0:
+                action = actions.FUNCTIONS.Move_screen("now", (x, y))
 
-        elif s[x][y] == 1:
-            action = actions.FUNCTIONS.select_point("select", (x, y))
+            elif s[i][x][y] == 1:
+                action = actions.FUNCTIONS.select_point("select", (x, y))
 
-        elif s[x][y] == 4:
-            action = actions.FUNCTIONS.Attack_screen("now", (x, y))
-
-    return action
+            elif s[i][x][y] == 4:
+                action = actions.FUNCTIONS.Attack_screen("now", (x, y))
+        y_i.append(action)
+    print('end')
+    if dim == 1 :
+        return y_i[0]
+    else :
+        return y_i
 
 
 class actorNetwork() :
@@ -76,22 +82,20 @@ class actorNetwork() :
         return inputs, out
 
     def predict(self, s):
-        s = s
-        s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
-        a = self.sess.run(self.out, feed_dict={
+        #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
+        out = self.sess.run(self.out, feed_dict={
             self.inputs : s
         })
-        action = postprocessing(s, a[0][0], a[0][1])
-        return action
+        action = postprocessing(s, out[0][0], out[0][1])
+        return action, out
 
     def target_predict(self, s):
-        s = s
-        s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
-        a = self.sess.run(self.target_out, feed_dict={
+        #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
+        out = self.sess.run(self.target_out, feed_dict={
             self.inputs : s
         })
-        action = postprocessing(s, a[0][0], a[0][1])
-        return action
+        action = postprocessing(s, out[0][0], out[0][1])
+        return action, out[0]
 
     def update_target_actor_network(self):
         self.sess.run(self.update_target_actor_network_params)
@@ -103,10 +107,12 @@ class actorNetwork() :
 
 class criticNetwork(object):
 
-    def __init__(self, sess, screen_size, actor_params_num, tau):
+    def __init__(self, sess, screen_size, actor_params_num, tau, lr, gamma):
         self.sess =sess
         self.screen_size = screen_size
         self.tau = tau
+        self.lr = lr
+        self.gamma = gamma
 
         with tf.variable_scope('critic') :
             self.inputs, self.out = self.create_critic_network()
@@ -124,6 +130,11 @@ class criticNetwork(object):
             [self.target_critic_network_params[i].assign(tf.multiply(self.critic_network_params[i], self.tau) \
                                                   + tf.multiply(self.target_critic_network_params[i], 1. - self.tau))
              for i in range(len(self.target_critic_network_params))]
+
+        self.predicted_q_value = tf.placeholder(tf.float32, [None, 1])
+
+        self.loss = tf.reduce_mean(tf.square(self.predicted_q_value - self.out))
+        self.optimize = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
     def create_critic_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
@@ -148,9 +159,15 @@ class criticNetwork(object):
 
         return inputs, out
 
+    def train(self, s, predicted_q_value):
+        return self.sess.run([self.out, self.optimize], feed_dict={
+            self.inputs : s,
+            self.predicted_q_value : predicted_q_value
+        })
+
     def predict(self, s):
 
-        s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
+        #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         q = self.sess.run(self.out, feed_dict={
             self.inputs: s
         })
@@ -158,7 +175,7 @@ class criticNetwork(object):
 
     def target_predict(self, s):
         #s = s[:,:,:,np.newaxis]
-        s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
+        #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         q = self.sess.run(self.target_out, feed_dict={
             self.target_inputs: s
         })

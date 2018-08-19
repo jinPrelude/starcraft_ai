@@ -18,8 +18,8 @@ def train(sess, env, actor, critic, args, action_noise, replay_buffer) :
 
     for episode in range(args['episode']):
 
-        # episode_reward = 0
-        # episode_max_q = 0
+        episode_reward = 0
+        episode_max_q = 0
 
         # reset state
         state = env.reset()
@@ -35,7 +35,10 @@ def train(sess, env, actor, critic, args, action_noise, replay_buffer) :
         for step in range(args['max_episode_step']):
 
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
-            a = [actor.predict(state_stack_arr)]
+            state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
+
+            a, _ = actor.predict(state_stack_arr)
+            a = [a]
             state2 = env.step(a)
 
 
@@ -60,9 +63,24 @@ def train(sess, env, actor, critic, args, action_noise, replay_buffer) :
                 s_batch, a_batch, r_batch, t_batch, s2_batch = \
                     replay_buffer.sample_batch(int(args['minibatch_size']))
 
+                s_batch = np.reshape(s_batch, (-1, args['screen_size'], args['screen_size'], 4))
+                s2_batch = np.reshape(s2_batch, (-1, args['screen_size'], args['screen_size'], 4))
                 target_q = critic.target_predict(s2_batch)
 
                 y_i = []
+                for k in range(int(args['minibatch_size'])):
+                    if t_batch[k]:
+                        y_i.append(r_batch[k])
+                    else:
+                        y_i.append(r_batch[k] + critic.gamma * target_q[k])
+
+                predicted_q_value, _ = critic.train(
+                    s_batch, np.reshape(y_i, (int(args['minibatch_size']), 1)))
+
+                episode_max_q += np.amax(predicted_q_value)
+
+                _, action = actor.predict(s_batch)
+                print('hello, world!')
 
             state_stack = state2_stack
 
@@ -86,7 +104,7 @@ def main(args) :
 
             # sess, screen_size, action_dim, learning_rate, tau, gamma, num_actor_vars, minibatch_size
             critic = criticNetwork(sess, args['screen_size'], actor.get_trainable_params_num(),
-                                   args['tau'])
+                                   args['tau'], args['critic_lr'], args['gamma'])
 
             replay_buffer = ReplayBuffer(buffer_size=args['buffer_size'])
             action_noise = OrnsteinUhlenbeckActionNoise(mu=0.)
