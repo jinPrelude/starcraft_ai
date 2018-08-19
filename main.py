@@ -22,39 +22,49 @@ def train(sess, env, actor, critic, args, action_noise, replay_buffer) :
         # episode_max_q = 0
 
         # reset state
-        s = env.reset()
+        state = env.reset()
 
         # extract player_relative layers
-        s = s[0].observation.feature_screen[5]
+        state = state[0].observation.feature_screen[5]
 
         # stack initial state
         for _ in range(state_stack.maxlen) :
-            state_stack.append(s)
+            state_stack.append(state)
 
 
         for step in range(args['max_episode_step']):
 
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             a = [actor.predict(state_stack_arr)]
-            s2 = env.step(a)
+            state2 = env.step(a)
 
 
             # Add to replay buffer
+            r = state2[0].reward
+            terminal = state2[0].last()
+            state2 = state2[0].observation.feature_screen[5]
 
-            r = s2[0].reward
-            terminal = s2[0].last()
-            s2 = s2[0].observation.feature_screen[5]
+            # Generate state2_stack to save in replay_buffer
+            state2_stack = state_stack
+            state2_stack.append(state2)
+            state2_stack_arr = np.asarray(state2_stack)
 
-            replay_buffer.add(state_stack_arr, a, r, terminal, s2)
+            a_axis = a[0][1][1]
+            replay_buffer.add(state_stack_arr, a_axis, r, terminal, state2_stack_arr)
 
             print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a[0].arguments,
                   ' | predicted_q : ', critic.predict(state_stack_arr))
             #input()
 
             if replay_buffer.size() > args['minibatch_size'] :
-                
+                s_batch, a_batch, r_batch, t_batch, s2_batch = \
+                    replay_buffer.sample_batch(int(args['minibatch_size']))
 
-            state_stack.append(s2)
+                target_q = critic.target_predict(s2_batch)
+
+                y_i = []
+
+            state_stack = state2_stack
 
 def main(args) :
     with tf.Session() as sess :
@@ -75,7 +85,7 @@ def main(args) :
                                  args['tau'])
 
             # sess, screen_size, action_dim, learning_rate, tau, gamma, num_actor_vars, minibatch_size
-            critic = criticNetwork(sess, args['screen_size'], actor.trainable_params_num(),
+            critic = criticNetwork(sess, args['screen_size'], actor.get_trainable_params_num(),
                                    args['tau'])
 
             replay_buffer = ReplayBuffer(buffer_size=args['buffer_size'])
