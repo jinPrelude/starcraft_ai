@@ -4,10 +4,10 @@ import numpy as np
 from pysc2.lib import actions
 from collections import deque
 from pysc2.env import sc2_env
-from only_coordinate.agent import actorNetwork, criticNetwork
+from agent import actorNetwork, criticNetwork
 from absl import flags
 import sys
-from only_coordinate.replay_buffer import ReplayBuffer
+from replay_buffer import ReplayBuffer
 
 def build_summaries():
     episode_reward = tf.Variable(0.)
@@ -122,7 +122,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
                 s_batch = np.reshape(s_batch, (-1, args['screen_size'], args['screen_size'], 4))
                 s2_batch = np.reshape(s2_batch, (-1, args['screen_size'], args['screen_size'], 4))
-                _, target_a_batch = actor.target_predict(s2_batch)
+                _, target_a_batch = actor.target_predict(s2_batch, available_action)
                 target_q = critic.target_predict(s2_batch, target_a_batch)
 
                 y_i = []
@@ -137,7 +137,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
                 episode_max_q += np.amax(predicted_q_value)
 
-                _, action = actor.predict(s_batch)
+                _, action = actor.predict(s_batch, available_action)
 
                 #test = actor.q_gradients(predicted_q_value, action)
                 grads = critic.q_gradient(s_batch, action)
@@ -202,7 +202,7 @@ if __name__=="__main__" :
     parser.add_argument('--action_dim', default=2)
     parser.add_argument('--minimap_size', default=64)
     parser.add_argument('--step_mul', default=8)
-    parser.add_argument('--max_episode_step', default=500)
+    parser.add_argument('--max_episode_step', default=560)
     parser.add_argument('--episode', default=100)
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
