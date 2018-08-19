@@ -20,29 +20,6 @@ def build_summaries():
 
     return summary_ops, summary_vars
 
-def is_available(available_action, a) :
-
-
-    #s = state[:,:,:,-1]
-    dim = len(a)
-    # 1개 들어올때만 생각했고 batch로 들어올때 생각을 못함
-
-    y_i = []
-    for i in range(dim) :
-
-        if not (a.id in available_action) :
-            result = actions.FUNCTIONS.no_op()
-        else :
-            result = a
-        y_i.append(result)
-
-    #print('end')
-    print('is_available function work')
-    if dim == 1 :
-        return y_i
-    else :
-        return y_i
-
     """
     if not (a in state.observation.available_actions) :
         result = actions.FUNCTIONS.no_op()
@@ -92,7 +69,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
-            a, a_raw = actor.predict(state_stack_arr, available_action)
+            a, a_raw, a_descrete = actor.predict(state_stack_arr, available_action)
             a = [a]
             #a = is_available(available_action, a)
             a_raw = np.reshape(a_raw, (1, args['action_dim']))
@@ -109,20 +86,19 @@ def train(sess, env, actor, critic, args, replay_buffer) :
             state2_stack.append(state2)
             state2_stack_arr = np.asarray(state2_stack)
 
-
-            replay_buffer.add(state_stack_arr, a_raw[0], r, terminal, state2_stack_arr)
+            replay_buffer.add(state_stack_arr, a_raw[0], a_descrete, r, terminal, state2_stack_arr)
 
             print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
                   ' | predicted_q : ', critic.predict(state_stack_arr, a_raw))
             #input()
 
             if replay_buffer.size() > args['train_start'] :
-                s_batch, a_batch, r_batch, t_batch, s2_batch = \
+                s_batch, a_batch, a_d_batch, r_batch, t_batch, s2_batch = \
                     replay_buffer.sample_batch(int(args['minibatch_size']))
 
                 s_batch = np.reshape(s_batch, (-1, args['screen_size'], args['screen_size'], 4))
                 s2_batch = np.reshape(s2_batch, (-1, args['screen_size'], args['screen_size'], 4))
-                _, target_a_batch = actor.target_predict(s2_batch, available_action)
+                _, target_a_batch, target_a_descrete_batch = actor.target_predict(s2_batch, available_action)
                 target_q = critic.target_predict(s2_batch, target_a_batch)
 
                 y_i = []
@@ -137,7 +113,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
                 episode_max_q += np.amax(predicted_q_value)
 
-                _, action = actor.predict(s_batch, available_action)
+                _, action, action_descrete = actor.predict(s_batch, available_action)
 
                 #test = actor.q_gradients(predicted_q_value, action)
                 grads = critic.q_gradient(s_batch, action)
@@ -158,7 +134,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
                 writer.add_summary(summary_str, episode)
                 writer.flush()
 
-                print('| Reward: {:d} | Episode: {:d} | Qmax: {:.4f}'.format(int(episode_reward), \
+                print('| Reward: {:d} | Episode: {:d} | Qmax: {:.4f}'.format(int(episode_reward),
                                                                              episode, (episode_max_q / float(step))))
                 reward_mean.append(episode_reward)
 
@@ -176,7 +152,7 @@ def main(args) :
             ),
             step_mul=args['step_mul'],
             game_steps_per_episode=args['max_episode_step'],
-            visualize=True
+            visualize=False
         ) as env :
             action_bound = int(args['screen_size']) / int(2)
             # sess, screen_size, action_dim, learning_rate, action_bound, minibatch_size, tau
@@ -211,7 +187,7 @@ if __name__=="__main__" :
     parser.add_argument('--load_model', default=False)
     parser.add_argument('-saved_model_directory', default='./results/save_model')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=5000)
+    parser.add_argument('--train_start', default=100)
 
     parser.add_argument('--actor_lr', default=0.001)
     parser.add_argument('--critic_lr', default=0.01)

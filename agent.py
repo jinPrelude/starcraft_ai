@@ -136,7 +136,7 @@ class actorNetwork() :
                                       initializer=init)
         l3_descrete = tf.matmul(l2_descrete, w3_descrete)
         l3_descrete = tf.nn.softmax(l3_descrete)
-        #l3_descrete = tf.argmax(l3_descrete, axis=1)
+        l3_descrete = tf.argmax(l3_descrete, axis=1)
 
 
         return inputs, out, l3_descrete
@@ -152,8 +152,6 @@ class actorNetwork() :
         out, out_descrete = self.sess.run([self.out, self.out_descrete], feed_dict={
             self.inputs : s
         })
-        noise = self.action_noise()
-        out_descrete = np.argmax(out_descrete, axis=1)
         out[0] -= self.action_noise()
         out = np.asarray(out)
         out = out.astype(int)
@@ -166,14 +164,13 @@ class actorNetwork() :
         action = postprocessing(s, out[0][0], out[0][1], available_action)
         action = act(out_descrete, available_action, out[0][0], out[0][1])
 
-        return action, out
+        return action, out, np.asarray(out_descrete)
 
     def target_predict(self, s, available_action):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         out, out_descrete = self.sess.run([self.target_out, self.target_out_descrete], feed_dict={
             self.target_inputs : s,
         })
-        out_descrete = np.argmax(out_descrete, axis=1)
         out[0] -= self.action_noise()
         out = np.asarray(out)
         out = out.astype(int)
@@ -181,7 +178,7 @@ class actorNetwork() :
         action = postprocessing(s, out[0][0], out[0][1], available_action)
         action = act(out_descrete, available_action, out[0][0], out[0][1])
 
-        return action, out[0]
+        return action, out, out_descrete
 
     def update_target_actor_network(self):
         self.sess.run(self.update_target_actor_network_params)
