@@ -31,29 +31,32 @@ def postprocessing(s, x, y, available_action) :
     else :
         return y_i
 
-def act(out_descrete, available_action, x, y) :
+def act(out_descrete, available_action, coordinate) :
     dim = np.shape(out_descrete)[0]
     # 1개 들어올때만 생각했고 batch로 들어올때 생각을 못함
 
     y_i = []
     for i in range(dim):
+        #print('out_descrete[%d] : '%i, out_descrete[i])
         action = actions.FUNCTIONS.no_op()
         if out_descrete[i] == 0:
             if actions.FUNCTIONS.Move_screen.id in available_action:
-                action = actions.FUNCTIONS.Move_screen("now", (x, y))
+                action = actions.FUNCTIONS.Move_screen("now", (coordinate[i][0], coordinate[i][1]))
 
         elif out_descrete[i] == 1:
             if actions.FUNCTIONS.select_point.id in available_action:
-                action = actions.FUNCTIONS.select_point("select", (x, y))
+                action = actions.FUNCTIONS.select_point("select", (coordinate[i][0], coordinate[i][1]))
 
         elif out_descrete[i] == 2:
             if actions.FUNCTIONS.Attack_screen.id in available_action:
-                action = actions.FUNCTIONS.Attack_screen("now", (x, y))
+                action = actions.FUNCTIONS.Attack_screen("now", (coordinate[i][0], coordinate[i][1]))
         else :
             if actions.FUNCTIONS.Attack_screen.id in available_action:
-                action = actions.FUNCTIONS.Attack_screen("now", (x, y))
+                action = actions.FUNCTIONS.Attack_screen("now", (coordinate[i][0], coordinate[i][1]))
+                print('attack', coordinate[i][0], coordinate[i][1])
             else :
                 actions.FUNCTIONS.no_op()
+                print('else', coordinate[i][0], coordinate[i][1])
 
         y_i.append(action)
     # print('end')
@@ -71,9 +74,10 @@ class actorNetwork() :
         self.action_bound = action_bound
         self.tau = tau
         self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.array([5., 5.]), sigma=10)
+        self.descrete_action_dim = 4
+        self.descrete_action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.descrete_action_dim), sigma=0.5)
         self.batch_size = batch_size
         self.lr = lr
-        self.descrete_action_dim = 4
         self.optimize_switch = True
 
         with tf.variable_scope('actor') :
@@ -119,7 +123,7 @@ class actorNetwork() :
 
     def create_actor_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
-        init = tf.random_uniform_initializer(-0.3, 0.3)
+        init = tf.random_uniform_initializer(-1, 1)
         conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
@@ -137,9 +141,9 @@ class actorNetwork() :
         w2 = tf.get_variable(name='w2', shape=[500, 2], dtype=tf.float32,
                              initializer=init)
         l2 = tf.matmul(l1, w2)
-        l2 = tf.nn.tanh(l2)
-        l2 = tf.multiply(l2, self.action_bound)
-        out = tf.add(l2, 32.)
+        out = tf.nn.tanh(l2)
+        out = tf.multiply(out, self.action_bound)
+        out = tf.add(out, 32.)
 
         w2_descrete = tf.get_variable(name='w2_descrete', shape=[500, 100], dtype=tf.float32,
                              initializer=init)
@@ -177,21 +181,22 @@ class actorNetwork() :
         out, out_descrete = self.sess.run([self.out, self.out_descrete], feed_dict={
             self.inputs : s
         })
-        out[0] -= self.action_noise()
-        out_descrete = np.argmax(out_descrete, axis=1)
+        out[0] += self.action_noise()
+        #out_descrete += self.descrete_action_noise() #
+        out_descrete = np.argmax(out_descrete, axis=1) #
         one_hot = np.zeros((np.shape(out_descrete)[0],4))
         for t in range(np.shape(one_hot)[0]) :
             one_hot[t][out_descrete[t]] = 1
-        out = np.asarray(out)
+        out = np.asarray(out) #
         out = out.astype(int)
-        out = np.clip(out, 10, 53)
+        out = np.clip(out, 1, 63)
         """
         for k in range(out.shape[0]) :
             outtf.clip_by_value(out[k][0], 1, 63)
             tf.clip_by_value(out[k][1], 1, 63)
             """
-        action = postprocessing(s, out[0][0], out[0][1], available_action)
-        action = act(out_descrete, available_action, out[0][0], out[0][1])
+        #action = postprocessing(s, out[0][0], out[0][1], available_action)
+        action = act(out_descrete, available_action, out)
 
         return action, out, np.asarray(one_hot)
 
@@ -200,16 +205,16 @@ class actorNetwork() :
         out, out_descrete = self.sess.run([self.target_out, self.target_out_descrete], feed_dict={
             self.target_inputs : s,
         })
-        out[0] -= self.action_noise()
+
         out_descrete = np.argmax(out_descrete, axis=1)
         one_hot = np.zeros((np.shape(out_descrete)[0],4))
         for t in range(np.shape(one_hot)[0]) :
             one_hot[t][out_descrete[t]] = 1
         out = np.asarray(out)
         out = out.astype(int)
-        out = np.clip(out, 10, 53)
-        action = postprocessing(s, out[0][0], out[0][1], available_action)
-        action = act(out_descrete, available_action, out[0][0], out[0][1])
+        out = np.clip(out, 1, 63)
+        #action = postprocessing(s, out, available_action)
+        action = act(out_descrete, available_action, out)
 
         return action, out, np.asarray(one_hot)
 
@@ -271,7 +276,7 @@ class criticNetwork(object):
                                  activation=tf.nn.relu)
 
         conv_flat = tf.layers.flatten(conv3)
-        init = tf.random_uniform_initializer(-0.3, 0.3)
+        init = tf.random_uniform_initializer(-1, 1)
         w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32, initializer=init)
         l1 = tf.matmul(conv_flat, w1)
         l1 = tf.nn.relu(l1)

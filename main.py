@@ -70,6 +70,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
             a, a_raw, a_descrete = actor.predict(state_stack_arr, available_action)
+            print('a_raw : ', a_raw)
             a = [a]
             #a = is_available(available_action, a)
             a_raw = np.reshape(a_raw, (1, args['action_dim']))
@@ -88,8 +89,8 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
             replay_buffer.add(state_stack_arr, a_raw[0], a_descrete[0], r, terminal, state2_stack_arr)
 
-            print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
-                  ' | predicted_q : ', critic.predict(state_stack_arr, a_raw, a_descrete))
+            #print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
+            #      ' | predicted_q : ', critic.predict(state_stack_arr, a_raw, a_descrete))
             #input()
 
             if replay_buffer.size() > args['train_start'] :
@@ -153,7 +154,7 @@ def main(args) :
             ),
             step_mul=args['step_mul'],
             game_steps_per_episode=args['max_episode_step'],
-            visualize=True
+            visualize=False
         ) as env :
             action_bound = int(args['screen_size']) / int(2)
             # sess, screen_size, action_dim, learning_rate, action_bound, minibatch_size, tau
