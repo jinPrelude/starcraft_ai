@@ -1,6 +1,7 @@
 from pysc2.lib import actions
 import tensorflow as tf
 import numpy as np
+from OU_Noise import OrnsteinUhlenbeckActionNoise
 
 def postprocessing(s, x, y) :
 
@@ -35,6 +36,7 @@ class actorNetwork() :
         self.action_dim = action_dim
         self.action_bound = action_bound
         self.tau = tau
+        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.action_dim))
 
         with tf.variable_scope('actor') :
             self.inputs, self.out = self.create_actor_network()
@@ -52,6 +54,9 @@ class actorNetwork() :
             [self.target_actor_network_params[i].assign(tf.multiply(self.actor_network_params[i], self.tau) +
                                                   tf.multiply(self.target_actor_network_params[i], 1. - self.tau)) for i in
              range(len(self.target_actor_network_params))]
+
+        self.predicted_q = tf.placeholder(tf.float32, shape=[None, 1])
+        self.q_grad = tf.gradients(self.predicted_q, self.out)
 
 
 
@@ -77,7 +82,7 @@ class actorNetwork() :
         l2 = tf.matmul(l1, w2)
         l2 = tf.nn.tanh(l2)
         l2 = tf.multiply(l2, self.action_bound)
-        out = tf.to_int32(tf.add(l2, 32))
+        out = tf.add(l2, 32.)
 
         return inputs, out
 
@@ -86,16 +91,27 @@ class actorNetwork() :
         out = self.sess.run(self.out, feed_dict={
             self.inputs : s
         })
+        out[0] += self.action_noise()
+        out = np.asarray(out)
+        out = out.astype(int)
         action = postprocessing(s, out[0][0], out[0][1])
         return action, out
 
     def target_predict(self, s):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         out = self.sess.run(self.target_out, feed_dict={
-            self.inputs : s
+            self.target_inputs : s,
         })
+        out = np.asarray(out)
+        out = out.astype(int)
         action = postprocessing(s, out[0][0], out[0][1])
         return action, out[0]
+
+    def q_gradients(self, s, predicted_q):
+        return self.sess.run(self.q_grad, feed_dict={
+            self.inputs : s,
+            self.predicted_q : predicted_q
+        })
 
     def update_target_actor_network(self):
         self.sess.run(self.update_target_actor_network_params)
@@ -107,21 +123,22 @@ class actorNetwork() :
 
 class criticNetwork(object):
 
-    def __init__(self, sess, screen_size, actor_params_num, tau, lr, gamma):
+    def __init__(self, sess, screen_size, actor_params_num, tau, lr, gamma, action_dim):
         self.sess =sess
         self.screen_size = screen_size
         self.tau = tau
         self.lr = lr
         self.gamma = gamma
+        self.action_dim = action_dim
 
         with tf.variable_scope('critic') :
-            self.inputs, self.out = self.create_critic_network()
+            self.inputs, self.actions, self.out = self.create_critic_network()
 
         self.critic_network_params = tf.trainable_variables()[actor_params_num:]
 
         # Target critic network 생성
         with tf.variable_scope('target_critic_network'):
-            self.target_inputs, self.target_out = self.create_critic_network()
+            self.target_inputs, self.target_actions, self.target_out = self.create_critic_network()
 
         self.target_critic_network_params = tf.trainable_variables()[
                                             (len(self.critic_network_params) + actor_params_num):]
@@ -136,9 +153,11 @@ class criticNetwork(object):
         self.loss = tf.reduce_mean(tf.square(self.predicted_q_value - self.out))
         self.optimize = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
+        self.q_grads = tf.gradients(self.out, self.actions)
+
     def create_critic_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
-
+        actions = tf.placeholder(tf.float32, shape=[None, self.action_dim])
         conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
@@ -147,39 +166,55 @@ class criticNetwork(object):
                                  activation=tf.nn.relu)
 
         conv_flat = tf.layers.flatten(conv3)
-
-        w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32,
-                             initializer=tf.random_uniform_initializer(-0.3, 0.3))
+        init = tf.random_uniform_initializer(-0.3, 0.3)
+        w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32, initializer=init)
         l1 = tf.matmul(conv_flat, w1)
         l1 = tf.nn.relu(l1)
 
-        w2 = tf.get_variable(name='w2', shape=[500, 1], dtype=tf.float32,
-                             initializer=tf.random_uniform_initializer(-0.3, 0.3))
-        out = tf.matmul(l1, w2)
+        w2 = tf.get_variable(name='w2', shape=[500, 100], dtype=tf.float32, initializer=init)
+        l2_tmp = tf.matmul(l1, w2)
 
-        return inputs, out
+        w1_a = tf.get_variable(name='w1_a', shape=[2, 100], dtype=tf.float32, initializer=init)
+        l1_a = tf.matmul(actions, w1_a)
 
-    def train(self, s, predicted_q_value):
+        l2 = tf.add(l2_tmp, l1_a)
+        l2 = tf.nn.relu(l2)
+
+        w3 = tf.get_variable(name='w3', shape=[100, 1], dtype=tf.float32, initializer=init)
+        out = tf.matmul(l2, w3)
+
+        return inputs, actions, out
+
+    def train(self, s, predicted_q_value, action):
         return self.sess.run([self.out, self.optimize], feed_dict={
             self.inputs : s,
-            self.predicted_q_value : predicted_q_value
+            self.predicted_q_value : predicted_q_value,
+            self.actions : action
         })
 
-    def predict(self, s):
+    def predict(self, s, action):
 
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         q = self.sess.run(self.out, feed_dict={
-            self.inputs: s
+            self.inputs: s,
+            self.actions : action
         })
         return q
 
-    def target_predict(self, s):
+    def target_predict(self, s, action):
         #s = s[:,:,:,np.newaxis]
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         q = self.sess.run(self.target_out, feed_dict={
-            self.target_inputs: s
+            self.target_inputs: s,
+            self.target_actions : action
         })
         return q
+
+    def q_gradient(self, s, a):
+        return self.sess.run(self.q_grads, feed_dict={
+            self.inputs: s,
+            self.actions: a
+        })
 
     def update_target_critic_network(self):
         self.sess.run(self.update_target_critic_network_params)
