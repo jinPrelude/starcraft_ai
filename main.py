@@ -49,7 +49,10 @@ def train(sess, env, actor, critic, args, action_noise, replay_buffer) :
 
             print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a[0].arguments,
                   ' | predicted_q : ', critic.predict(state_stack_arr))
-            input()
+            #input()
+
+            if replay_buffer.size() > args['minibatch_size'] :
+                
 
             state_stack.append(s2)
 
@@ -68,10 +71,12 @@ def main(args) :
         ) as env :
             action_bound = int(args['screen_size']) / int(2) - 1
             # sess, screen_size, action_dim, learning_rate, action_bound, minibatch_size, tau
-            actor = actorNetwork(sess, args['screen_size'], args['action_dim'], action_bound)
+            actor = actorNetwork(sess, args['screen_size'], args['action_dim'], action_bound,
+                                 args['tau'])
 
             # sess, screen_size, action_dim, learning_rate, tau, gamma, num_actor_vars, minibatch_size
-            critic = criticNetwork(sess, args['screen_size'])
+            critic = criticNetwork(sess, args['screen_size'], actor.trainable_params_num(),
+                                   args['tau'])
 
             replay_buffer = ReplayBuffer(buffer_size=args['buffer_size'])
             action_noise = OrnsteinUhlenbeckActionNoise(mu=0.)

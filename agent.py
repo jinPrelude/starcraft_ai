@@ -23,15 +23,30 @@ def postprocessing(s, x, y) :
 
 
 class actorNetwork() :
-    def __init__(self, sess, screen_size, action_dim, action_bound):
+    def __init__(self, sess, screen_size, action_dim, action_bound, tau):
         self.sess = sess
         self.screen_size = screen_size
         self.action_dim = action_dim
         self.action_bound = action_bound
-
+        self.tau = tau
 
         with tf.variable_scope('actor') :
             self.inputs, self.out = self.create_actor_network()
+
+        self.actor_network_params = tf.trainable_variables()
+
+        with tf.variable_scope('target_actor') :
+            self.target_inputs, self.target_out = self.create_actor_network()
+
+        self.target_actor_network_params = tf.trainable_variables()[len(self.actor_network_params):]
+
+        self.trainable_params_num = len(self.actor_network_params) + len(self.target_actor_network_params)
+
+        self.update_target_actor_network_params = \
+            [self.target_actor_network_params[i].assign(tf.multiply(self.actor_network_params[i], self.tau) +
+                                                  tf.multiply(self.target_actor_network_params[i], 1. - self.tau)) for i in
+             range(len(self.target_actor_network_params))]
+
 
 
     def create_actor_network(self):
@@ -69,16 +84,47 @@ class actorNetwork() :
         action = postprocessing(s, a[0][0], a[0][1])
         return action
 
+    def target_predict(self, s):
+        s = s
+        s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
+        a = self.sess.run(self.target_out, feed_dict={
+            self.inputs : s
+        })
+        action = postprocessing(s, a[0][0], a[0][1])
+        return action
+
+    def update_target_actor_network(self):
+        self.sess.run(self.update_target_actor_network_params)
+
+    def trainable_params_num(self):
+        return self.trainable_params_num
+
 ###############################################################
 
 class criticNetwork(object):
 
-    def __init__(self, sess, screen_size):
+    def __init__(self, sess, screen_size, actor_params_num, tau):
         self.sess =sess
         self.screen_size = screen_size
+        self.actor_params_num = actor_params_num
+        self.tau = tau
 
         with tf.variable_scope('critic') :
             self.inputs, self.out = self.create_critic_network()
+
+        self.critic_network_params = tf.trainable_variables()[self.actor_params_num:]
+
+        # Target critic network 생성
+        with tf.variable_scope('target_critic_network'):
+            self.target_inputs, self.target_out = self.create_critic_network()
+
+        self.target_critic_network_params = tf.trainable_variables()[
+                                            (len(self.critic_network_params) + self.actor_params_num):]
+
+        self.update_target_critic_network_params = \
+            [self.target_critic_network_params[i].assign(tf.multiply(self.critic_network_params[i], self.tau) \
+                                                  + tf.multiply(self.target_critic_network_params[i], 1. - self.tau))
+             for i in range(len(self.target_critic_network_params))]
 
     def create_critic_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
@@ -110,3 +156,14 @@ class criticNetwork(object):
             self.inputs: s
         })
         return q
+
+    def target_predict(self, s):
+
+        s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
+        q = self.sess.run(self.target_out, feed_dict={
+            self.inputs: s
+        })
+        return q
+
+    def update_target_critic_network(self):
+        self.sess.run(self.update_target_critic_network_params)
