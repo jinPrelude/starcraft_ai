@@ -22,7 +22,7 @@ def postprocessing(s, x, y) :
             elif s[i][x][y] == 4:
                 action = actions.FUNCTIONS.Attack_screen("now", (x, y))
         y_i.append(action)
-    print('end')
+    #print('end')
     if dim == 1 :
         return y_i[0]
     else :
@@ -30,13 +30,15 @@ def postprocessing(s, x, y) :
 
 
 class actorNetwork() :
-    def __init__(self, sess, screen_size, action_dim, action_bound, tau):
+    def __init__(self, sess, screen_size, action_dim, action_bound, tau, batch_size, lr):
         self.sess = sess
         self.screen_size = screen_size
         self.action_dim = action_dim
         self.action_bound = action_bound
         self.tau = tau
         self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.action_dim))
+        self.batch_size = batch_size
+        self.lr = lr
 
         with tf.variable_scope('actor') :
             self.inputs, self.out = self.create_actor_network()
@@ -55,8 +57,15 @@ class actorNetwork() :
                                                   tf.multiply(self.target_actor_network_params[i], 1. - self.tau)) for i in
              range(len(self.target_actor_network_params))]
 
-        self.predicted_q = tf.placeholder(tf.float32, shape=[None, 1])
-        self.q_grad = tf.gradients(self.predicted_q, self.out)
+        self.action_gradient = tf.placeholder(tf.float32, [None, self.action_dim])
+
+        self.unnormalized_actor_gradients = tf.gradients(
+            self.out, self.actor_network_params, -self.action_gradient)
+
+        self.actor_gradients = list(map(lambda x: tf.div(x, self.batch_size), self.unnormalized_actor_gradients))
+
+        self.optimize = \
+            tf.train.AdamOptimizer(self.lr).apply_gradients(zip(self.actor_gradients, self.actor_network_params))
 
 
 
@@ -86,6 +95,12 @@ class actorNetwork() :
 
         return inputs, out
 
+    def train(self, inputs, a_gradient):
+        self.sess.run(self.optimize, feed_dict={
+            self.inputs: inputs,
+            self.action_gradient: a_gradient
+        })
+
     def predict(self, s):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         out = self.sess.run(self.out, feed_dict={
@@ -106,12 +121,6 @@ class actorNetwork() :
         out = out.astype(int)
         action = postprocessing(s, out[0][0], out[0][1])
         return action, out[0]
-
-    def q_gradients(self, s, predicted_q):
-        return self.sess.run(self.q_grad, feed_dict={
-            self.inputs : s,
-            self.predicted_q : predicted_q
-        })
 
     def update_target_actor_network(self):
         self.sess.run(self.update_target_actor_network_params)
