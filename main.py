@@ -20,15 +20,6 @@ def build_summaries():
 
     return summary_ops, summary_vars
 
-    """
-    if not (a in state.observation.available_actions) :
-        result = actions.FUNCTIONS.no_op()
-    else :
-        result = a
-
-    print('is_available function work')
-    return result
-    """
 
 def train(sess, env, actor, critic, args, replay_buffer) :
 
@@ -69,11 +60,11 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
-            a, a_raw, a_descrete = actor.predict(state_stack_arr, available_action)
-            print('a_raw : ', a_raw)
+            a, a_raw, a_descrete = actor.predict(state_stack_arr, available_action, (replay_buffer.size() < args['train_start']))
+            print(a_raw)
+            #타입 맞춰주기용
             a = [a]
-            #a = is_available(available_action, a)
-            a_raw = np.reshape(a_raw, (1, args['action_dim']))
+
             state2 = env.step(a)
             available_action = state2[0].observation.available_actions
 
@@ -86,6 +77,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
             state2_stack = state_stack
             state2_stack.append(state2)
             state2_stack_arr = np.asarray(state2_stack)
+            state2_stack_arr = np.reshape(state2_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
 
             replay_buffer.add(state_stack_arr, a_raw[0], a_descrete[0], r, terminal, state2_stack_arr)
 
@@ -109,12 +101,13 @@ def train(sess, env, actor, critic, args, replay_buffer) :
                     else:
                         y_i.append(r_batch[k] + critic.gamma * target_q[k])
 
-                predicted_q_value, _ = critic.train(
-                    s_batch, np.reshape(y_i, (int(args['minibatch_size']), 1)), a_raw, a_descrete)
+                y_i = np.asarray(y_i)
+                y_i = np.reshape(y_i, (args['minibatch_size'], 1))
+                predicted_q_value, _ = critic.train(s_batch, y_i, a_batch, a_d_batch)
 
                 episode_max_q += np.amax(predicted_q_value)
 
-                _, action, action_descrete = actor.predict(s_batch, available_action)
+                _, action, action_descrete = actor.predict(s_batch, available_action, (replay_buffer.size() < args['train_start']))
 
                 #test = actor.q_gradients(predicted_q_value, action)
                 grads = critic.q_gradient(s_batch, action, action_descrete)
@@ -154,7 +147,7 @@ def main(args) :
             ),
             step_mul=args['step_mul'],
             game_steps_per_episode=args['max_episode_step'],
-            visualize=False
+            visualize=True
         ) as env :
             action_bound = int(args['screen_size']) / int(2)
             # sess, screen_size, action_dim, learning_rate, action_bound, minibatch_size, tau
@@ -185,11 +178,11 @@ if __name__=="__main__" :
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
     parser.add_argument('--buffer_size', default=100000)
-    parser.add_argument('--minibatch_size', default=64)
+    parser.add_argument('--minibatch_size', default=32)
     parser.add_argument('--load_model', default=False)
     parser.add_argument('-saved_model_directory', default='./results/save_model')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=1000)
+    parser.add_argument('--train_start', default=500)
 
     parser.add_argument('--actor_lr', default=0.001)
     parser.add_argument('--critic_lr', default=0.01)

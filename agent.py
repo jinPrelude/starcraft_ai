@@ -33,7 +33,7 @@ def postprocessing(s, x, y, available_action) :
 
 def act(out_descrete, available_action, coordinate) :
     dim = np.shape(out_descrete)[0]
-    # 1개 들어올때만 생각했고 batch로 들어올때 생각을 못함
+
 
     y_i = []
     for i in range(dim):
@@ -53,13 +53,14 @@ def act(out_descrete, available_action, coordinate) :
         else :
             if actions.FUNCTIONS.Attack_screen.id in available_action:
                 action = actions.FUNCTIONS.Attack_screen("now", (coordinate[i][0], coordinate[i][1]))
-                print('attack', coordinate[i][0], coordinate[i][1])
+                #print('attack', coordinate[i][0], coordinate[i][1])
             else :
                 actions.FUNCTIONS.no_op()
-                print('else', coordinate[i][0], coordinate[i][1])
+                #print('else', coordinate[i][0], coordinate[i][1])
 
         y_i.append(action)
     # print('end')
+    #print('y_i : ', y_i)
     if dim == 1:
         return y_i[0]
     else:
@@ -73,7 +74,7 @@ class actorNetwork() :
         self.action_dim = action_dim
         self.action_bound = action_bound
         self.tau = tau
-        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.array([5., 5.]), sigma=10)
+        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.array([5., 5.]), sigma=5)
         self.descrete_action_dim = 4
         self.descrete_action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.descrete_action_dim), sigma=0.5)
         self.batch_size = batch_size
@@ -123,34 +124,34 @@ class actorNetwork() :
 
     def create_actor_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
-        init = tf.random_uniform_initializer(-1, 1)
-        conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
-        conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+        init = tf.contrib.layers.xavier_initializer()
+        conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
+                                 activation=tf.nn.tanh)
+        conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
+                                 activation=tf.nn.tanh)
         conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.tanh)
 
         conv_flat = tf.layers.flatten(conv3)
 
-        w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32,
+        w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32,
                              initializer=init)
         l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.relu(l1)
+        l1 = tf.nn.tanh(l1)
 
-        w2 = tf.get_variable(name='w2', shape=[500, 2], dtype=tf.float32,
+        w2 = tf.get_variable(name='w2', shape=[100, 2], dtype=tf.float32,
                              initializer=init)
         l2 = tf.matmul(l1, w2)
         out = tf.nn.tanh(l2)
         out = tf.multiply(out, self.action_bound)
         out = tf.add(out, 32.)
 
-        w2_descrete = tf.get_variable(name='w2_descrete', shape=[500, 100], dtype=tf.float32,
+        w2_descrete = tf.get_variable(name='w2_descrete', shape=[100, 50], dtype=tf.float32,
                              initializer=init)
         l2_descrete = tf.matmul(l1, w2_descrete)
-        l2_descrete = tf.nn.relu(l2_descrete)
+        l2_descrete = tf.nn.tanh(l2_descrete)
 
-        w3_descrete = tf.get_variable(name='w3_descrete', shape=[100, 4], dtype=tf.float32,
+        w3_descrete = tf.get_variable(name='w3_descrete', shape=[50, 4], dtype=tf.float32,
                                       initializer=init)
         l3_descrete = tf.matmul(l2_descrete, w3_descrete)
         l3_descrete = tf.nn.softmax(l3_descrete)
@@ -176,7 +177,7 @@ class actorNetwork() :
             })
             self.optimize_switch = True
 
-    def predict(self, s, available_action):
+    def predict(self, s, available_action, random):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         out, out_descrete = self.sess.run([self.out, self.out_descrete], feed_dict={
             self.inputs : s
@@ -187,7 +188,6 @@ class actorNetwork() :
         one_hot = np.zeros((np.shape(out_descrete)[0],4))
         for t in range(np.shape(one_hot)[0]) :
             one_hot[t][out_descrete[t]] = 1
-        out = np.asarray(out) #
         out = out.astype(int)
         out = np.clip(out, 1, 63)
         """
@@ -196,27 +196,34 @@ class actorNetwork() :
             tf.clip_by_value(out[k][1], 1, 63)
             """
         #action = postprocessing(s, out[0][0], out[0][1], available_action)
+        if random :
+            out = np.random.uniform(10, 53, (1, 2))
+            out = out.astype(int)
+
+            out_descrete = np.random.randint(0, 3, (1))  #
+            one_hot = np.zeros((np.shape(out_descrete)[0], 4))
+            for t in range(np.shape(one_hot)[0]):
+                one_hot[t][out_descrete[t]] = 1
+
         action = act(out_descrete, available_action, out)
 
-        return action, out, np.asarray(one_hot)
+        return action, out, one_hot
 
     def target_predict(self, s, available_action):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         out, out_descrete = self.sess.run([self.target_out, self.target_out_descrete], feed_dict={
             self.target_inputs : s,
         })
-
-        out_descrete = np.argmax(out_descrete, axis=1)
+        # 좌표값이 오지게 64랑 1만 나오낟
+        out_descrete = np.argmax(out_descrete, axis=1) ## 타입 이상함
         one_hot = np.zeros((np.shape(out_descrete)[0],4))
         for t in range(np.shape(one_hot)[0]) :
             one_hot[t][out_descrete[t]] = 1
-        out = np.asarray(out)
         out = out.astype(int)
         out = np.clip(out, 1, 63)
-        #action = postprocessing(s, out, available_action)
         action = act(out_descrete, available_action, out)
 
-        return action, out, np.asarray(one_hot)
+        return action, out, one_hot
 
     def update_target_actor_network(self):
         self.sess.run(self.update_target_actor_network_params)
@@ -268,33 +275,33 @@ class criticNetwork(object):
         actions = tf.placeholder(tf.float32, shape=[None, self.action_dim])
         descrete_actions = tf.placeholder(tf.float32, shape=[None, self.descrete_action_dim])
 
-        conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
-        conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+        conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
+                                 activation=tf.nn.tanh)
+        conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
+                                 activation=tf.nn.tanh)
         conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.tanh)
 
         conv_flat = tf.layers.flatten(conv3)
-        init = tf.random_uniform_initializer(-1, 1)
-        w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32, initializer=init)
+        init = tf.contrib.layers.xavier_initializer()
+        w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32, initializer=init)
         l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.relu(l1)
+        l1 = tf.nn.tanh(l1)
 
-        w2 = tf.get_variable(name='w2', shape=[500, 100], dtype=tf.float32, initializer=init)
+        w2 = tf.get_variable(name='w2', shape=[100, 50], dtype=tf.float32, initializer=init)
         l2_tmp = tf.matmul(l1, w2)
 
-        w1_a = tf.get_variable(name='w1_a', shape=[2, 100], dtype=tf.float32, initializer=init)
+        w1_a = tf.get_variable(name='w1_a', shape=[2, 50], dtype=tf.float32, initializer=init)
         l1_a = tf.matmul(actions, w1_a)
 
-        w1_a_d = tf.get_variable(name='w1_a_d', shape=[4, 100], dtype=tf.float32, initializer=init)
+        w1_a_d = tf.get_variable(name='w1_a_d', shape=[4, 50], dtype=tf.float32, initializer=init)
         l1_a_d = tf.matmul(descrete_actions, w1_a_d)
 
         l2 = tf.add(l2_tmp, l1_a)
         l2 = tf.add(l1_a, l1_a_d)
-        l2 = tf.nn.relu(l2)
+        l2 = tf.nn.tanh(l2)
 
-        w3 = tf.get_variable(name='w3', shape=[100, 1], dtype=tf.float32, initializer=init)
+        w3 = tf.get_variable(name='w3', shape=[50, 1], dtype=tf.float32, initializer=init)
         out = tf.matmul(l2, w3)
 
         return inputs, actions, descrete_actions, out
