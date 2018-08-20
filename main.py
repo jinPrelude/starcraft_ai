@@ -61,7 +61,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
             a, a_raw, a_descrete = actor.predict(state_stack_arr, available_action, (replay_buffer.size() < args['train_start']))
-            print(a_raw)
+            #print(a_raw)
             #타입 맞춰주기용
             a = [a]
 
@@ -147,7 +147,7 @@ def main(args) :
             ),
             step_mul=args['step_mul'],
             game_steps_per_episode=args['max_episode_step'],
-            visualize=True
+            visualize=False
         ) as env :
             action_bound = int(args['screen_size']) / int(2)
             # sess, screen_size, action_dim, learning_rate, action_bound, minibatch_size, tau
