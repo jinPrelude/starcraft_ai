@@ -4,10 +4,10 @@ import numpy as np
 from pysc2.lib import actions
 from collections import deque
 from pysc2.env import sc2_env
-from only_coordinate.agent import actorNetwork, criticNetwork
+from agent import actorNetwork, criticNetwork
 from absl import flags
 import sys
-from only_coordinate.replay_buffer import ReplayBuffer
+from replay_buffer import ReplayBuffer
 
 def build_summaries():
     episode_reward = tf.Variable(0.)
@@ -94,8 +94,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
             a, a_raw = actor.predict(state_stack_arr, available_action)
             a = [a]
-            #a = is_available(available_action, a)
-            a_raw = np.reshape(a_raw, (1, args['action_dim']))
+
             state2 = env.step(a)
             available_action = state2[0].observation.available_actions
 
@@ -108,12 +107,12 @@ def train(sess, env, actor, critic, args, replay_buffer) :
             state2_stack = state_stack
             state2_stack.append(state2)
             state2_stack_arr = np.asarray(state2_stack)
-
+            state2_stack_arr = np.reshape(state2_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
 
             replay_buffer.add(state_stack_arr, a_raw[0], r, terminal, state2_stack_arr)
 
-            print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
-                  ' | predicted_q : ', critic.predict(state_stack_arr, a_raw))
+            #print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
+            #      ' | predicted_q : ', critic.predict(state_stack_arr, a_raw))
             #input()
 
             if replay_buffer.size() > args['train_start'] :
@@ -122,7 +121,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
                 s_batch = np.reshape(s_batch, (-1, args['screen_size'], args['screen_size'], 4))
                 s2_batch = np.reshape(s2_batch, (-1, args['screen_size'], args['screen_size'], 4))
-                _, target_a_batch = actor.target_predict(s2_batch)
+                _, target_a_batch = actor.target_predict(s2_batch, available_action)
                 target_q = critic.target_predict(s2_batch, target_a_batch)
 
                 y_i = []
@@ -132,12 +131,13 @@ def train(sess, env, actor, critic, args, replay_buffer) :
                     else:
                         y_i.append(r_batch[k] + critic.gamma * target_q[k])
 
-                predicted_q_value, _ = critic.train(
-                    s_batch, np.reshape(y_i, (int(args['minibatch_size']), 1)), a_raw)
+                y_i = np.asarray(y_i)
+                y_i = np.reshape(y_i, (args['minibatch_size'], 1))
+                predicted_q_value, _ = critic.train(s_batch, y_i, a_batch)
 
                 episode_max_q += np.amax(predicted_q_value)
 
-                _, action = actor.predict(s_batch)
+                _, action = actor.predict(s_batch, available_action)
 
                 #test = actor.q_gradients(predicted_q_value, action)
                 grads = critic.q_gradient(s_batch, action)
@@ -158,7 +158,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
                 writer.add_summary(summary_str, episode)
                 writer.flush()
 
-                print('| Reward: {:d} | Episode: {:d} | Qmax: {:.4f}'.format(int(episode_reward), \
+                print('| Reward: {:d} | Episode: {:d} | Qmax: {:.4f}'.format(int(episode_reward),
                                                                              episode, (episode_max_q / float(step))))
                 reward_mean.append(episode_reward)
 
@@ -207,11 +207,11 @@ if __name__=="__main__" :
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
     parser.add_argument('--buffer_size', default=100000)
-    parser.add_argument('--minibatch_size', default=64)
+    parser.add_argument('--minibatch_size', default=16)
     parser.add_argument('--load_model', default=False)
     parser.add_argument('-saved_model_directory', default='./results/save_model')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=5000)
+    parser.add_argument('--train_start', default=100)
 
     parser.add_argument('--actor_lr', default=0.001)
     parser.add_argument('--critic_lr', default=0.01)

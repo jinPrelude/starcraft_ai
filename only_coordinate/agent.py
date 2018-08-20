@@ -1,16 +1,20 @@
 from pysc2.lib import actions
 import tensorflow as tf
 import numpy as np
-from only_coordinate.OU_Noise import OrnsteinUhlenbeckActionNoise
+from OU_Noise import OrnsteinUhlenbeckActionNoise
 
-def postprocessing(s, x, y, available_action) :
+def postprocessing(s, coordinate, available_action) :
 
     s = s[:,:,:,-1]
     dim = np.shape(s)[0]
     # 1개 들어올때만 생각했고 batch로 들어올때 생각을 못함
 
     y_i = []
+    x = 0
+    y = 0
     for i in range(dim) :
+        x = coordinate[i][0]
+        y = coordinate[i][1]
         action = actions.FUNCTIONS.no_op()
         if x != 0 and y != 0:
             if s[i][x][y] == 0:
@@ -84,12 +88,12 @@ class actorNetwork() :
 
         conv_flat = tf.layers.flatten(conv3)
 
-        w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32,
+        w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32,
                              initializer=tf.random_uniform_initializer(-0.3, 0.3))
         l1 = tf.matmul(conv_flat, w1)
         l1 = tf.nn.relu(l1)
 
-        w2 = tf.get_variable(name='w2', shape=[500, 2], dtype=tf.float32,
+        w2 = tf.get_variable(name='w2', shape=[100, 2], dtype=tf.float32,
                              initializer=tf.random_uniform_initializer(-0.3, 0.3))
         l2 = tf.matmul(l1, w2)
         l2 = tf.nn.tanh(l2)
@@ -112,13 +116,13 @@ class actorNetwork() :
         out[0] -= self.action_noise()
         out = np.asarray(out)
         out = out.astype(int)
-        out = np.clip(out, 10, 53)
+        out = np.clip(out, 1, 63)
         """
         for k in range(out.shape[0]) :
             outtf.clip_by_value(out[k][0], 1, 63)
             tf.clip_by_value(out[k][1], 1, 63)
             """
-        action = postprocessing(s, out[0][0], out[0][1], available_action)
+        action = postprocessing(s, out, available_action)
 
         return action, out
 
@@ -130,10 +134,10 @@ class actorNetwork() :
         out[0] -= self.action_noise()
         out = np.asarray(out)
         out = out.astype(int)
-        out = np.clip(out, 10, 53)
-        action = postprocessing(s, out[0][0], out[0][1], available_action)
+        out = np.clip(out, 1, 63)
+        action = postprocessing(s, out, available_action)
 
-        return action, out[0]
+        return action, out
 
     def update_target_actor_network(self):
         self.sess.run(self.update_target_actor_network_params)
@@ -189,20 +193,20 @@ class criticNetwork(object):
 
         conv_flat = tf.layers.flatten(conv3)
         init = tf.random_uniform_initializer(-0.3, 0.3)
-        w1 = tf.get_variable(name='w1', shape=[64 * 64, 500], dtype=tf.float32, initializer=init)
+        w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32, initializer=init)
         l1 = tf.matmul(conv_flat, w1)
         l1 = tf.nn.relu(l1)
 
-        w2 = tf.get_variable(name='w2', shape=[500, 100], dtype=tf.float32, initializer=init)
+        w2 = tf.get_variable(name='w2', shape=[100, 50], dtype=tf.float32, initializer=init)
         l2_tmp = tf.matmul(l1, w2)
 
-        w1_a = tf.get_variable(name='w1_a', shape=[2, 100], dtype=tf.float32, initializer=init)
+        w1_a = tf.get_variable(name='w1_a', shape=[2, 50], dtype=tf.float32, initializer=init)
         l1_a = tf.matmul(actions, w1_a)
 
         l2 = tf.add(l2_tmp, l1_a)
         l2 = tf.nn.relu(l2)
 
-        w3 = tf.get_variable(name='w3', shape=[100, 1], dtype=tf.float32, initializer=init)
+        w3 = tf.get_variable(name='w3', shape=[50, 1], dtype=tf.float32, initializer=init)
         out = tf.matmul(l2, w3)
 
         return inputs, actions, out
