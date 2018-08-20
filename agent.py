@@ -73,6 +73,8 @@ class actorNetwork() :
         self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.array([5., 5.]), sigma=10)
         self.batch_size = batch_size
         self.lr = lr
+        self.descrete_action_dim = 4
+        self.optimize_switch = True
 
         with tf.variable_scope('actor') :
             self.inputs, self.out, self.out_descrete = self.create_actor_network()
@@ -91,15 +93,27 @@ class actorNetwork() :
                                                   tf.multiply(self.target_actor_network_params[i], 1. - self.tau)) for i in
              range(len(self.target_actor_network_params))]
 
-        self.action_gradient = tf.placeholder(tf.float32, [None, self.action_dim])
 
-        self.unnormalized_actor_gradients = tf.gradients(
+        self.action_gradient = tf.placeholder(tf.float32, [None, self.action_dim])
+        self.descrete_action_gradient = tf.placeholder(tf.float32, [None, self.descrete_action_dim])
+
+        self.unnormalized_actor_continuous_gradients = tf.gradients(
             self.out, self.actor_network_params, -self.action_gradient)[:8]
+
+        self.actor_network_params_descrete = self.actor_network_params[:6] + self.actor_network_params[8:]
+
+        self.unnormalized_actor_descrete_gradients = tf.gradients(
+            self.out_descrete, self.actor_network_params_descrete, -self.descrete_action_gradient)
+
+        self.unnormalized_actor_gradients = self.unnormalized_actor_continuous_gradients + self.unnormalized_actor_descrete_gradients
 
         self.actor_gradients = list(map(lambda x: tf.div(x, self.batch_size), self.unnormalized_actor_gradients))
 
-        self.optimize = \
-            tf.train.AdamOptimizer(self.lr).apply_gradients(zip(self.actor_gradients, self.actor_network_params))
+        self.optimize_continuous = \
+            tf.train.AdamOptimizer(self.lr).apply_gradients(zip(self.actor_gradients[:8], self.actor_network_params))
+
+        self.optimize_descrete = \
+            tf.train.AdamOptimizer(self.lr).apply_gradients(zip(self.actor_gradients[8:], self.actor_network_params_descrete))
 
 
 
@@ -136,16 +150,27 @@ class actorNetwork() :
                                       initializer=init)
         l3_descrete = tf.matmul(l2_descrete, w3_descrete)
         l3_descrete = tf.nn.softmax(l3_descrete)
-        l3_descrete = tf.argmax(l3_descrete, axis=1)
+        #l3_descrete = tf.argmax(l3_descrete, axis=1)
 
 
         return inputs, out, l3_descrete
 
-    def train(self, inputs, a_gradient):
-        self.sess.run(self.optimize, feed_dict={
-            self.inputs: inputs,
-            self.action_gradient: a_gradient
-        })
+    def train(self, inputs, a_gradient, a_d_gradient):
+        if self.optimize_switch is True :
+            self.sess.run(self.optimize_continuous, feed_dict={
+                self.inputs: inputs,
+                self.action_gradient: a_gradient,
+                self.descrete_action_gradient : a_d_gradient
+            })
+            self.optimize_switch = False
+
+        else :
+            self.sess.run(self.optimize_descrete, feed_dict={
+                self.inputs: inputs,
+                self.action_gradient: a_gradient,
+                self.descrete_action_gradient: a_d_gradient
+            })
+            self.optimize_switch = True
 
     def predict(self, s, available_action):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
@@ -153,6 +178,10 @@ class actorNetwork() :
             self.inputs : s
         })
         out[0] -= self.action_noise()
+        out_descrete = np.argmax(out_descrete, axis=1)
+        one_hot = np.zeros((np.shape(out_descrete)[0],4))
+        for t in range(np.shape(one_hot)[0]) :
+            one_hot[t][out_descrete[t]] = 1
         out = np.asarray(out)
         out = out.astype(int)
         out = np.clip(out, 10, 53)
@@ -164,7 +193,7 @@ class actorNetwork() :
         action = postprocessing(s, out[0][0], out[0][1], available_action)
         action = act(out_descrete, available_action, out[0][0], out[0][1])
 
-        return action, out, np.asarray(out_descrete)
+        return action, out, np.asarray(one_hot)
 
     def target_predict(self, s, available_action):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
@@ -172,13 +201,17 @@ class actorNetwork() :
             self.target_inputs : s,
         })
         out[0] -= self.action_noise()
+        out_descrete = np.argmax(out_descrete, axis=1)
+        one_hot = np.zeros((np.shape(out_descrete)[0],4))
+        for t in range(np.shape(one_hot)[0]) :
+            one_hot[t][out_descrete[t]] = 1
         out = np.asarray(out)
         out = out.astype(int)
         out = np.clip(out, 10, 53)
         action = postprocessing(s, out[0][0], out[0][1], available_action)
         action = act(out_descrete, available_action, out[0][0], out[0][1])
 
-        return action, out, out_descrete
+        return action, out, np.asarray(one_hot)
 
     def update_target_actor_network(self):
         self.sess.run(self.update_target_actor_network_params)
@@ -197,15 +230,16 @@ class criticNetwork(object):
         self.lr = lr
         self.gamma = gamma
         self.action_dim = action_dim
+        self.descrete_action_dim = 4
 
         with tf.variable_scope('critic') :
-            self.inputs, self.actions, self.out = self.create_critic_network()
+            self.inputs, self.actions, self.descrete_actions, self.out = self.create_critic_network()
 
         self.critic_network_params = tf.trainable_variables()[actor_params_num:]
 
         # Target critic network 생성
         with tf.variable_scope('target_critic_network'):
-            self.target_inputs, self.target_actions, self.target_out = self.create_critic_network()
+            self.target_inputs, self.target_actions, self.target_descrete_actions, self.target_out = self.create_critic_network()
 
         self.target_critic_network_params = tf.trainable_variables()[
                                             (len(self.critic_network_params) + actor_params_num):]
@@ -222,9 +256,13 @@ class criticNetwork(object):
 
         self.q_grads = tf.gradients(self.out, self.actions)
 
+        self.descrete_q_grads = tf.gradients(self.out, self.descrete_actions)
+
     def create_critic_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
         actions = tf.placeholder(tf.float32, shape=[None, self.action_dim])
+        descrete_actions = tf.placeholder(tf.float32, shape=[None, self.descrete_action_dim])
+
         conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
@@ -244,45 +282,60 @@ class criticNetwork(object):
         w1_a = tf.get_variable(name='w1_a', shape=[2, 100], dtype=tf.float32, initializer=init)
         l1_a = tf.matmul(actions, w1_a)
 
+        w1_a_d = tf.get_variable(name='w1_a_d', shape=[4, 100], dtype=tf.float32, initializer=init)
+        l1_a_d = tf.matmul(descrete_actions, w1_a_d)
+
         l2 = tf.add(l2_tmp, l1_a)
+        l2 = tf.add(l1_a, l1_a_d)
         l2 = tf.nn.relu(l2)
 
         w3 = tf.get_variable(name='w3', shape=[100, 1], dtype=tf.float32, initializer=init)
         out = tf.matmul(l2, w3)
 
-        return inputs, actions, out
+        return inputs, actions, descrete_actions, out
 
-    def train(self, s, predicted_q_value, action):
+    def train(self, s, predicted_q_value, action, descrete_action):
         return self.sess.run([self.out, self.optimize], feed_dict={
             self.inputs : s,
             self.predicted_q_value : predicted_q_value,
-            self.actions : action
+            self.actions : action,
+            self.descrete_actions : descrete_action
         })
 
-    def predict(self, s, action):
+    def predict(self, s, action, descrete_action):
 
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         action = np.reshape(action, (-1, 2))
         q = self.sess.run(self.out, feed_dict={
             self.inputs: s,
-            self.actions : action
+            self.actions : action,
+            self.descrete_actions : descrete_action
         })
         return q
 
-    def target_predict(self, s, action):
+    def target_predict(self, s, action, descrete_action):
         #s = s[:,:,:,np.newaxis]
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         action = np.reshape(action, (-1, 2))
         q = self.sess.run(self.target_out, feed_dict={
             self.target_inputs: s,
-            self.target_actions : action
+            self.target_actions : action,
+            self.target_descrete_actions : descrete_action
         })
         return q
 
-    def q_gradient(self, s, a):
+    def q_gradient(self, s, a, a_d):
         return self.sess.run(self.q_grads, feed_dict={
             self.inputs: s,
-            self.actions: a
+            self.actions: a,
+            self.descrete_actions :  a_d
+        })
+
+    def descrete_q_gradient(self, s, a, a_d):
+        return self.sess.run(self.descrete_q_grads, feed_dict={
+            self.inputs : s,
+            self.actions : a,
+            self.descrete_actions : a_d
         })
 
     def update_target_critic_network(self):
