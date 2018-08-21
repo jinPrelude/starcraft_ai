@@ -92,7 +92,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
-            a, a_raw = actor.predict(state_stack_arr, available_action)
+            a, a_raw = actor.predict(state_stack_arr, available_action, (replay_buffer.size() < args['train_start']))
             a = [a]
 
             state2 = env.step(a)
@@ -137,7 +137,7 @@ def train(sess, env, actor, critic, args, replay_buffer) :
 
                 episode_max_q += np.amax(predicted_q_value)
 
-                _, action = actor.predict(s_batch, available_action)
+                _, action = actor.predict(s_batch, available_action, False)
 
                 #test = actor.q_gradients(predicted_q_value, action)
                 grads = critic.q_gradient(s_batch, action)
@@ -202,8 +202,8 @@ if __name__=="__main__" :
     parser.add_argument('--action_dim', default=2)
     parser.add_argument('--minimap_size', default=64)
     parser.add_argument('--step_mul', default=8)
-    parser.add_argument('--max_episode_step', default=500)
-    parser.add_argument('--episode', default=100)
+    parser.add_argument('--max_episode_step', default=400)
+    parser.add_argument('--episode', default=10000)
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
     parser.add_argument('--buffer_size', default=100000)
@@ -211,9 +211,9 @@ if __name__=="__main__" :
     parser.add_argument('--load_model', default=False)
     parser.add_argument('-saved_model_directory', default='./results/save_model')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=100)
+    parser.add_argument('--train_start', default=500)
 
-    parser.add_argument('--actor_lr', default=0.001)
+    parser.add_argument('--actor_lr', default=0.00001)
     parser.add_argument('--critic_lr', default=0.01)
 
     flags.FLAGS(sys.argv)

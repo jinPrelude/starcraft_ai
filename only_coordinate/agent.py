@@ -16,20 +16,24 @@ def postprocessing(s, coordinate, available_action) :
         x = coordinate[i][0]
         y = coordinate[i][1]
         action = actions.FUNCTIONS.no_op()
-        if x != 0 and y != 0:
-            if s[i][x][y] == 0:
-                if actions.FUNCTIONS.Move_screen.id in available_action :
-                    action = actions.FUNCTIONS.Move_screen("now", (x, y))
+        if (x > np.shape(s)[1] - 1) or (y > np.shape(s)[1] - 1) or (x < 1) or (y < 1):
+            action = actions.FUNCTIONS.no_op()
+            return action
+        else :
+            if x != 0 and y != 0:
+                if s[i][x][y] == 0:
+                    if actions.FUNCTIONS.Attack_screen.id in available_action :
+                        action = actions.FUNCTIONS.Attack_screen("now", (x, y))
 
-            elif s[i][x][y] == 1:
-                if actions.FUNCTIONS.select_point.id in available_action :
-                    action = actions.FUNCTIONS.select_point("select", (x, y))
+                elif s[i][x][y] == 1:
+                    if actions.FUNCTIONS.Attack_screen.id in available_action :
+                        action = actions.FUNCTIONS.select_point("select", (x, y))
 
-            elif s[i][x][y] == 4:
-                if actions.FUNCTIONS.Attack_screen.id in available_action :
-                    action = actions.FUNCTIONS.Attack_screen("now", (x, y))
-        y_i.append(action)
-    #print('end')
+                elif s[i][x][y] == 4:
+                    if actions.FUNCTIONS.Attack_screen.id in available_action :
+                        action = actions.FUNCTIONS.Attack_screen("now", (x, y))
+            y_i.append(action)
+        #print('end')
     if dim == 1 :
         return y_i[0]
     else :
@@ -43,7 +47,7 @@ class actorNetwork() :
         self.action_dim = action_dim
         self.action_bound = action_bound
         self.tau = tau
-        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.action_dim), sigma=5)
+        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.array([5., 5.]), sigma=2)
         self.batch_size = batch_size
         self.lr = lr
 
@@ -78,51 +82,75 @@ class actorNetwork() :
 
     def create_actor_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
-
+        init = tf.random_uniform_initializer(-0.05, 0.05)
         conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.leaky_relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.leaky_relu)
         conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
 
         w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32,
-                             initializer=tf.random_uniform_initializer(-0.3, 0.3))
+                             initializer=init)
         l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.relu(l1)
+        l1 = tf.nn.leaky_relu(l1)
 
         w2 = tf.get_variable(name='w2', shape=[100, 2], dtype=tf.float32,
-                             initializer=tf.random_uniform_initializer(-0.3, 0.3))
+                             initializer=init)
         l2 = tf.matmul(l1, w2)
-        l2 = tf.nn.tanh(l2)
-        l2 = tf.multiply(l2, self.action_bound)
-        out = tf.add(l2, 32.)
+        l2 = tf.nn.leaky_relu(l2)
+        #out2 = tf.multiply(out3, self.action_bound)
+        #out = tf.add(out2, 32.)
 
-        return inputs, out
-
+        return inputs, l2
+    """
     def train(self, inputs, a_gradient):
         self.sess.run(self.optimize, feed_dict={
             self.inputs: inputs,
             self.action_gradient: a_gradient
         })
+    """
+    def train(self, inputs, a_gradient):
+        _, target_actor_network_params, ummormalized_actor_gradients , actor_gradients = \
+            self.sess.run([self.optimize, self.target_actor_network_params, self.unnormalized_actor_gradients,
+                       self.actor_gradients], feed_dict={
+            self.inputs: inputs,
+            self.action_gradient: a_gradient
+        })
+        print('bebebebe')
 
-    def predict(self, s, available_action):
+    def predict(self, s, available_action, random):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
         out = self.sess.run(self.out, feed_dict={
             self.inputs : s
         })
-        out[0] -= self.action_noise()
+        out[0] += self.action_noise()
+        print()
+        print(out)
         out = np.asarray(out)
+        #out = out/10.
         out = out.astype(int)
-        out = np.clip(out, 1, 63)
         """
         for k in range(out.shape[0]) :
             outtf.clip_by_value(out[k][0], 1, 63)
             tf.clip_by_value(out[k][1], 1, 63)
             """
+
+        if random :
+            out = np.random.uniform(10, 53, (1, 2))
+            out = out.astype(int)
+
+            out_descrete = np.random.randint(0, 3, (1))  #
+            one_hot = np.zeros((np.shape(out_descrete)[0], 4))
+            for t in range(np.shape(one_hot)[0]):
+                one_hot[t][out_descrete[t]] = 1
+
         action = postprocessing(s, out, available_action)
+
+
+
 
         return action, out
 
@@ -185,17 +213,17 @@ class criticNetwork(object):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
         actions = tf.placeholder(tf.float32, shape=[None, self.action_dim])
         conv1 = tf.layers.conv2d(inputs=inputs, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.leaky_relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=32, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.leaky_relu)
         conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.relu)
+                                 activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
         init = tf.random_uniform_initializer(-0.3, 0.3)
         w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32, initializer=init)
         l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.relu(l1)
+        l1 = tf.nn.leaky_relu(l1)
 
         w2 = tf.get_variable(name='w2', shape=[100, 50], dtype=tf.float32, initializer=init)
         l2_tmp = tf.matmul(l1, w2)
@@ -204,7 +232,7 @@ class criticNetwork(object):
         l1_a = tf.matmul(actions, w1_a)
 
         l2 = tf.add(l2_tmp, l1_a)
-        l2 = tf.nn.relu(l2)
+        l2 = tf.nn.leaky_relu(l2)
 
         w3 = tf.get_variable(name='w3', shape=[50, 1], dtype=tf.float32, initializer=init)
         out = tf.matmul(l2, w3)
