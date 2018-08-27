@@ -4,10 +4,10 @@ import numpy as np
 from pysc2.lib import actions
 from collections import deque
 from pysc2.env import sc2_env
-from agent import actorNetwork, criticNetwork
+from only_coordinate.DDPG.agent import actorNetwork, criticNetwork
 from absl import flags
 import sys
-from replay_buffer import ReplayBuffer
+from only_coordinate.DDPG.replay_buffer import ReplayBuffer
 
 def build_summaries():
     episode_reward = tf.Variable(0.)

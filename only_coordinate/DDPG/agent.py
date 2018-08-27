@@ -1,7 +1,7 @@
 from pysc2.lib import actions
 import tensorflow as tf
 import numpy as np
-from OU_Noise import OrnsteinUhlenbeckActionNoise
+from only_coordinate.DDPG.OU_Noise import OrnsteinUhlenbeckActionNoise
 
 def postprocessing(s, coordinate, available_action) :
 
