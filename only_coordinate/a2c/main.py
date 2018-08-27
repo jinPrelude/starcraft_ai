@@ -104,9 +104,11 @@ def train(sess, env, actor, critic, args) :
         if episode > 10 :
             reward_reduce_mean = int(sum(reward_mean)/len(reward_mean))
 
-            if reward_reduce_mean > 30 :
-                    saver.save(sess, args['summary_dir'])
-                    break
+            if episode % 500 == 0 :
+                saver.save(sess, './results/save_model/%d_ep'%episode)
+                print('good')
+
+
 
 
 def main(args) :
@@ -139,8 +141,8 @@ if __name__=="__main__" :
     parser.add_argument('--max_episode_step', default=300)
     parser.add_argument('--max_episode', default=10000)
 
-    parser.add_argument('--load_model', default=False)
-    parser.add_argument('--saved_model_directory', default='./results/save_model')
+    parser.add_argument('--load_model', default=True)
+    parser.add_argument('--saved_model_directory', default='./results/save_model/3800_ep')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
 
     parser.add_argument('--actor_lr', default=0.001)
