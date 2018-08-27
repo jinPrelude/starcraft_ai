@@ -82,12 +82,12 @@ class actorNetwork() :
         self.optimize_switch = True
 
         with tf.variable_scope('actor') :
-            self.inputs, self.out = self.create_actor_network()
+            self.inputs, self.out, self.l2= self.create_actor_network()
 
         self.actor_network_params = tf.trainable_variables()
 
         with tf.variable_scope('target_actor') :
-            self.target_inputs, self.target_out = self.create_actor_network()
+            self.target_inputs, self.target_out, _ = self.create_actor_network()
 
         self.target_actor_network_params = tf.trainable_variables()[len(self.actor_network_params):]
 
@@ -137,7 +137,7 @@ class actorNetwork() :
         out = tf.add(out, 32.)
 
 
-        return inputs, out
+        return inputs, out, l2
 
     def train(self, inputs, a_gradient):
 
@@ -148,9 +148,10 @@ class actorNetwork() :
 
     def predict(self, s, random):
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
-        out = self.sess.run(self.out, feed_dict={
+        out , l2= self.sess.run([self.out, self.l2], feed_dict={
             self.inputs : s
         })
+        #print("out : ", out)
         out[0] += self.action_noise()
 
         out = out.astype(int)
@@ -218,10 +219,9 @@ class actorNetwork_SPG():
         self.select = tf.placeholder(tf.int32, shape=[None, 1])
         test = []
         for k in range(self.batch_size) :
-            test.append(self.out[k, self.select[0, k]])
-        test = np.array(test)
-        self.action_prob = tf.reshape(test, [1])
-        self.loss = -tf.log(self.action_prob) * self.advantage
+            test.append(self.out[k, self.select[k, 0]])
+        test = tf.reshape(test, [self.batch_size, 1])
+        self.loss = -tf.reduce_mean(tf.log(test) * self.advantage)
         self.optimize = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
 
     def create_actor_network(self):

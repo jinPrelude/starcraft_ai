@@ -184,7 +184,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
         if episode > 10 :
             reward_reduce_mean = int(sum(reward_mean)/len(reward_mean))
 
-            if episode % 5 == 0 :
+            if episode % 100 == 0 :
                 saver.save(sess, './results/save_model/%d_ep'%episode)
                 print('good')
 
@@ -200,7 +200,7 @@ def main(args) :
             ),
             step_mul=args['step_mul'],
             game_steps_per_episode=args['max_episode_step'],
-            visualize=False
+            visualize=True
         ) as env :
             action_bound = int(args['screen_size']) / int(2)
             # sess, screen_size, action_dim, learning_rate, action_bound, minibatch_size, tau
@@ -231,15 +231,15 @@ if __name__=="__main__" :
     parser.add_argument('--minimap_size', default=64)
     parser.add_argument('--step_mul', default=8)
     parser.add_argument('--max_episode_step', default=200)
-    parser.add_argument('--episode', default=10000)
+    parser.add_argument('--episode', default=100000)
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
     parser.add_argument('--buffer_size', default=100000)
-    parser.add_argument('--minibatch_size', default=24)
+    parser.add_argument('--minibatch_size', default=86)
     parser.add_argument('--load_model', default=False)
     parser.add_argument('-saved_model_directory', default='./results/save_model')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=200)
+    parser.add_argument('--train_start', default=10000)
 
     parser.add_argument('--actor_lr', default=0.001)
     parser.add_argument('--critic_lr', default=0.01)
