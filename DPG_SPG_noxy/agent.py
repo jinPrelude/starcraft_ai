@@ -74,7 +74,7 @@ class actorNetwork() :
         self.action_dim = action_dim
         self.action_bound = action_bound
         self.tau = tau
-        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.action_dim), sigma=5)
+        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.action_dim), sigma=20)
         self.descrete_action_dim = 4
         self.descrete_action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.descrete_action_dim), sigma=0.5)
         self.batch_size = batch_size
@@ -115,11 +115,10 @@ class actorNetwork() :
     def create_actor_network(self):
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
         init = tf.contrib.layers.xavier_initializer()
+        init = tf.random_uniform_initializer(0.1, 0.3)
         conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.leaky_relu)
-        conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.leaky_relu)
-        conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
+        conv3 = tf.layers.conv2d(inputs=conv1, filters=1, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
@@ -208,13 +207,16 @@ class actorNetwork_SPG():
 
         self.trainable_params_num = len(self.actor_SPG_network_params)
 
-        self.advantage = tf.placeholder(tf.float32, shape=[None, 1])
-        self.select = tf.placeholder(tf.int32, shape=[None, 1])
+        self.advantage = tf.placeholder(tf.float32, shape=None)
+        self.select = tf.placeholder(tf.int32, shape=None)
+        """
         test = []
         for k in range(self.batch_size) :
             test.append(self.out[k, self.select[k, 0]])
         test = tf.reshape(test, [self.batch_size, 1])
         self.loss = -tf.reduce_mean(tf.log(test) * self.advantage)
+        """
+        self.loss = tf.log(self.out[0, self.select]) * self.advantage
         self.optimize = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
 
     def create_actor_network(self):
@@ -222,9 +224,7 @@ class actorNetwork_SPG():
         init = tf.contrib.layers.xavier_initializer()
         conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.leaky_relu)
-        conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.leaky_relu)
-        conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
+        conv3 = tf.layers.conv2d(inputs=conv1, filters=1, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
@@ -247,7 +247,7 @@ class actorNetwork_SPG():
         loss, _ = self.sess.run([self.loss, self.optimize], feed_dict={
             self.inputs: inputs,
             self.advantage : advantage,
-            self.select : select
+            self.select : select[0]
         })
         return loss
 
@@ -310,9 +310,8 @@ class criticNetwork(object):
 
         conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.leaky_relu)
-        conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.leaky_relu)
-        conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
+
+        conv3 = tf.layers.conv2d(inputs=conv1, filters=1, kernel_size=[3, 3], padding='same',
                                  activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
