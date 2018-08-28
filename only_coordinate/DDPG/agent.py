@@ -1,7 +1,7 @@
 from pysc2.lib import actions
 import tensorflow as tf
 import numpy as np
-from only_DDPG.OU_Noise import OrnsteinUhlenbeckActionNoise
+from only_coordinate.DDPG.OU_Noise import OrnsteinUhlenbeckActionNoise
 
 def postprocessing(s, x, y, available_action) :
 
@@ -123,7 +123,7 @@ class actorNetwork() :
 
         conv_flat = tf.layers.flatten(conv3)
 
-        w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32,
+        w1 = tf.get_variable(name='w1', shape=[self.screen_size * self.screen_size, 100], dtype=tf.float32,
                              initializer=init)
         l1 = tf.matmul(conv_flat, w1)
         l1 = tf.nn.leaky_relu(l1)
@@ -160,7 +160,7 @@ class actorNetwork() :
             """
         #action = postprocessing(s, out[0][0], out[0][1], available_action)
         if random :
-            out = np.random.randint(1, 4095)
+            out = np.random.randint(1, np.square(self.screen_size)-1)
 
 
         return out
@@ -173,7 +173,7 @@ class actorNetwork() :
         out[0] += self.action_noise()
 
         out = out.astype(int)
-        out = np.clip(out, 1, 4095)
+        out = np.clip(out, 1, np.square(self.screen_size)-1)
 
         return out
 
@@ -184,93 +184,14 @@ class actorNetwork() :
         return self.trainable_params_num
 
 
-class actorNetwork_SPG():
-    def __init__(self, sess, screen_size, action_dim, action_bound, tau, batch_size, lr, actor_variables_num):
-        self.sess = sess
-        self.screen_size = screen_size
-        self.action_dim = action_dim
-        self.action_bound = action_bound
-        self.tau = tau
-        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.array([5., 5.]), sigma=5)
-        self.descrete_action_dim = 4
-        self.descrete_action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.descrete_action_dim), sigma=0.5)
-        self.batch_size = batch_size
-        self.lr = lr
-        self.optimize_switch = True
 
-
-
-        with tf.variable_scope('actor_SPG'):
-            self.inputs, self.out = self.create_actor_network()
-
-        self.actor_SPG_network_params = tf.trainable_variables()[actor_variables_num:]
-
-        self.trainable_params_num = len(self.actor_SPG_network_params)
-
-        self.advantage = tf.placeholder(tf.float32, shape=None)
-        self.select = tf.placeholder(tf.int32, shape=None)
-        """
-        test = []
-        for k in range(self.batch_size) :
-            test.append(self.out[k, self.select[k, 0]])
-        test = tf.reshape(test, [self.batch_size, 1])
-        self.loss = -tf.reduce_mean(tf.log(test) * self.advantage)
-        """
-        self.loss = tf.log(self.out[0, self.select]) * self.advantage
-        self.optimize = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
-
-    def create_actor_network(self):
-        inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
-        init = tf.contrib.layers.xavier_initializer()
-        conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.leaky_relu)
-        conv3 = tf.layers.conv2d(inputs=conv1, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.leaky_relu)
-
-        conv_flat = tf.layers.flatten(conv3)
-
-        w1 = tf.get_variable(name='w1_SPG', shape=[64 * 64, 100], dtype=tf.float32,
-                             initializer=init)
-        l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.leaky_relu(l1)
-
-        w2 = tf.get_variable(name='w2_SPG', shape=[100, 4], dtype=tf.float32,
-                             initializer=init)
-        l2 = tf.matmul(l1, w2)
-        out = tf.nn.leaky_relu(l2)
-        out = tf.nn.softmax(out)
-
-        return inputs, out
-
-    def train(self, inputs, advantage, select):
-
-        loss, _ = self.sess.run([self.loss, self.optimize], feed_dict={
-            self.inputs: inputs,
-            self.advantage : advantage,
-            self.select : select[0]
-        })
-        return loss
-
-    def predict(self, s):
-        # s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
-        out = self.sess.run(self.out, feed_dict={
-            self.inputs: s
-        })
-        grid = np.arange(0, 4)
-        select = np.random.choice(grid, 1, p=out[0])
-        action_prob = out[0][select]
-
-        return select, action_prob
-
-    def get_trainable_params_num(self):
-        return self.trainable_params_num
 
 
 ###############################################################
 
 class criticNetwork(object):
 
-    def __init__(self, sess, screen_size, actor_params_num, actor_SPG_params_num, tau, lr, gamma, action_dim):
+    def __init__(self, sess, screen_size, actor_params_num,  tau, lr, gamma, action_dim):
         self.sess =sess
         self.screen_size = screen_size
         self.tau = tau
@@ -282,14 +203,14 @@ class criticNetwork(object):
         with tf.variable_scope('critic') :
             self.inputs, self.actions, self.out = self.create_critic_network()
 
-        self.critic_network_params = tf.trainable_variables()[actor_params_num + actor_SPG_params_num:]
+        self.critic_network_params = tf.trainable_variables()[actor_params_num:]
 
         # Target critic network 생성
         with tf.variable_scope('target_critic_network'):
             self.target_inputs, self.target_actions, self.target_out = self.create_critic_network()
 
         self.target_critic_network_params = tf.trainable_variables()[
-                                            (len(self.critic_network_params) + actor_params_num + actor_SPG_params_num):]
+                                            (len(self.critic_network_params) + actor_params_num):]
 
         self.update_target_critic_network_params = \
             [self.target_critic_network_params[i].assign(tf.multiply(self.critic_network_params[i], self.tau) \
@@ -316,7 +237,7 @@ class criticNetwork(object):
 
         conv_flat = tf.layers.flatten(conv3)
         init = tf.contrib.layers.xavier_initializer()
-        w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32, initializer=init)
+        w1 = tf.get_variable(name='w1', shape=[self.screen_size * self.screen_size, 100], dtype=tf.float32, initializer=init)
         l1 = tf.matmul(conv_flat, w1)
         l1 = tf.nn.leaky_relu(l1)
 

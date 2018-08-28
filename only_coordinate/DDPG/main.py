@@ -4,10 +4,10 @@ import numpy as np
 from collections import deque
 from pysc2.env import sc2_env
 from pysc2.lib import actions
-from DPG_SPG_noxy.agent import actorNetwork, criticNetwork, actorNetwork_SPG
+from only_coordinate.DDPG.agent import actorNetwork, criticNetwork
 from absl import flags
 import sys
-from DPG_SPG_noxy.replay_buffer import ReplayBuffer
+from only_coordinate.DDPG.replay_buffer import ReplayBuffer
 
 def act(out_descrete, available_action, coordinate) :
     dim = out_descrete.size
@@ -58,7 +58,7 @@ def build_summaries():
     return summary_ops, summary_vars
 
 
-def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
+def train(sess, env, actor, critic, args, replay_buffer) :
 
     summary_ops, summary_vars = build_summaries()
 
@@ -99,21 +99,23 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
             a_raw = actor.predict(state_stack_arr, (replay_buffer.size() < args['train_start']))
-            a_select, a_select_prob = actor_SPG.predict(state_stack_arr)
 
             #print(a_raw)
             #타입 맞춰주기용
 
             reward = 0
 
-            if (a_raw > 4094) or (a_raw < 2):
+            if (a_raw > np.square(args['screen_size'])-2) or (a_raw < 2):
                 reward = -500
-                a_raw = np.clip(a_raw, 1, 4095)
+                a_raw = np.clip(a_raw, 1, np.square(args['screen_size'])-1)
 
-            x = int(a_raw / 64)
-            y = int(a_raw % 64)
+            x = int(a_raw / args['screen_size'])
+            y = int(a_raw % args['screen_size'])
             a_coordinate = np.array([[x, y]])
-            a = act(a_select, available_action, a_coordinate)
+            if actions.FUNCTIONS.Attack_screen.id in available_action :
+                a = actions.FUNCTIONS.Attack_screen("now", (x, y))
+            else :
+                a = actions.FUNCTIONS.no_op()
             a = [a]
 
             state2 = env.step(a)
@@ -131,7 +133,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             state2_stack_arr = np.asarray(state2_stack)
             state2_stack_arr = np.reshape(state2_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
 
-            replay_buffer.add(state_stack_arr, a_raw, a_select, r, terminal, state2_stack_arr)
+            replay_buffer.add(state_stack_arr, a_raw, r, terminal, state2_stack_arr)
 
             #print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
             #      ' | predicted_q : ', critic.predict(state_stack_arr, a_raw, a_descrete))
@@ -139,7 +141,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
 
 
             if replay_buffer.size() > args['train_start'] :
-                s_batch, a_batch, select_batch, r_batch, t_batch, s2_batch = \
+                s_batch, a_batch, r_batch, t_batch, s2_batch = \
                     replay_buffer.sample_batch(int(args['minibatch_size']))
 
                 s_batch = np.reshape(s_batch, (-1, args['screen_size'], args['screen_size'], 4))
@@ -166,23 +168,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
                 #test = actor.q_gradients(predicted_q_value, action)
                 grads = critic.q_gradient(s_batch, action)
                 actor.train(s_batch, grads[0])
-                """
-                predicted_q = critic.predict(s_batch, a_batch)
-                advantage = []
-                for k in range(int(args['minibatch_size'])):
-                    advantage.append(float(y_i[k] - predicted_q[k]))
 
-                advantage = np.asarray(advantage)
-                advantage = np.reshape(advantage, (args['minibatch_size'], 1))
-
-                loss = actor_SPG.train(s_batch, advantage, select_batch)
-                """
-                v = critic.predict(state_stack_arr, a_raw)
-                a2 = actor.predict(state2_stack_arr, False)
-                v2 = critic.predict(state2_stack_arr, a2)
-                advantage = (r + critic.gamma * v2) - v
-                loss = actor_SPG.train(state_stack_arr, advantage, a_select)
-                episode_loss += loss[0][0]
                 actor.update_target_actor_network()
                 critic.update_target_critic_network()
 
@@ -192,8 +178,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             if terminal:
                 summary_str = sess.run(summary_ops, feed_dict={
                     summary_vars[0]: episode_reward,
-                    summary_vars[1]: episode_max_q / float(step),
-                    summary_vars[2]: episode_loss / float(step)
+                    summary_vars[1]: episode_max_q / float(step)
                 })
 
                 writer.add_summary(summary_str, episode)
@@ -231,17 +216,15 @@ def main(args) :
             actor = actorNetwork(sess, args['screen_size'], args['action_dim'], action_bound,
                                  args['tau'], args['minibatch_size'], args['actor_lr'])
 
-            actor_SPG = actorNetwork_SPG(sess, args['screen_size'], args['action_dim'], action_bound,
-                                 args['tau'], args['minibatch_size'], args['actor_SPG_lr'], actor.get_trainable_params_num())
 
             # sess, screen_size, action_dim, learning_rate, tau, gamma, num_actor_vars, minibatch_size
             critic = criticNetwork(sess, args['screen_size'], actor.get_trainable_params_num(),
-                                   actor_SPG.get_trainable_params_num(), args['tau'], args['critic_lr'],
+                                   args['tau'], args['critic_lr'],
                                    args['gamma'], args['action_dim'])
 
             replay_buffer = ReplayBuffer(buffer_size=args['buffer_size'])
 
-            train(sess, env, actor, actor_SPG, critic, args, replay_buffer)
+            train(sess, env, actor, critic, args, replay_buffer)
 
 
 
@@ -250,20 +233,20 @@ if __name__=="__main__" :
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--map_name', default='DefeatRoaches')
-    parser.add_argument('--screen_size', default=64)
+    parser.add_argument('--screen_size', default=32)
     parser.add_argument('--action_dim', default=1)
-    parser.add_argument('--minimap_size', default=64)
+    parser.add_argument('--minimap_size', default=8)
     parser.add_argument('--step_mul', default=8)
-    parser.add_argument('--max_episode_step', default=200)
+    parser.add_argument('--max_episode_step', default=300)
     parser.add_argument('--episode', default=100000)
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
     parser.add_argument('--buffer_size', default=10000)
-    parser.add_argument('--minibatch_size', default=32)
+    parser.add_argument('--minibatch_size', default=128)
     parser.add_argument('--load_model', default=False)
     parser.add_argument('-saved_model_directory', default='./results/save_model')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=2000)
+    parser.add_argument('--train_start', default=4000)
 
     parser.add_argument('--actor_lr', default=0.001)
     parser.add_argument('--actor_SPG_lr', default=0.0005)
