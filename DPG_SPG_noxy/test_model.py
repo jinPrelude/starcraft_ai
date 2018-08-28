@@ -4,10 +4,10 @@ import numpy as np
 from collections import deque
 from pysc2.env import sc2_env
 from pysc2.lib import actions
-from DPG_SPG.agent import actorNetwork, criticNetwork, actorNetwork_SPG
+from DPG_SPG_noxy.agent import actorNetwork, criticNetwork, actorNetwork_SPG
 from absl import flags
 import sys
-from DPG_SPG.replay_buffer import ReplayBuffer
+from DPG_SPG_noxy.replay_buffer import ReplayBuffer
 
 def act(out_descrete, available_action, coordinate) :
     dim = out_descrete.size
@@ -65,6 +65,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
 
     if args['load_model'] :
         saver.restore(sess, args['saved_model_directory'])
+        print('load')
     else :
         sess.run(tf.global_variables_initializer())
 
@@ -96,10 +97,20 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
 
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
-            a_coordinate = actor.predict(state_stack_arr, False)
+            a_raw = actor.predict(state_stack_arr, (replay_buffer.size() < args['train_start']))
             a_select, a_select_prob = actor_SPG.predict(state_stack_arr)
             #print(a_raw)
             #타입 맞춰주기용
+
+            reward = 0
+
+            if (a_raw > 4094) or (a_raw < 2):
+                reward = -500
+                a_raw = np.clip(a_raw, 1, 4095)
+
+            x = int(a_raw / 64)
+            y = int(a_raw % 64)
+            a_coordinate = np.array([[x, y]])
             a = act(a_select, available_action, a_coordinate)
             a = [a]
 
@@ -107,7 +118,8 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             available_action = state2[0].observation.available_actions
 
             # Add to replay buffer
-            r = state2[0].reward
+            r = state2[0].reward + reward
+
             terminal = state2[0].last()
             state2 = state2[0].observation.feature_screen[5]
 
@@ -117,7 +129,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             state2_stack_arr = np.asarray(state2_stack)
             state2_stack_arr = np.reshape(state2_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
 
-            replay_buffer.add(state_stack_arr, a_coordinate[0], a_select, r, terminal, state2_stack_arr)
+            replay_buffer.add(state_stack_arr, [a_raw], a_select, r, terminal, state2_stack_arr)
 
             #print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
             #      ' | predicted_q : ', critic.predict(state_stack_arr, a_raw, a_descrete))
@@ -127,6 +139,13 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             state_stack = state2_stack
             episode_reward += r
 
+
+        if episode > 10 :
+            reward_reduce_mean = int(sum(reward_mean)/len(reward_mean))
+
+            if episode % 100 == 0 :
+                saver.save(sess, './results/save_model/%d_ep'%episode)
+                print('good')
 
 def main(args) :
     with tf.Session() as sess :
@@ -167,7 +186,7 @@ if __name__=="__main__" :
 
     parser.add_argument('--map_name', default='DefeatRoaches')
     parser.add_argument('--screen_size', default=64)
-    parser.add_argument('--action_dim', default=2)
+    parser.add_argument('--action_dim', default=1)
     parser.add_argument('--minimap_size', default=64)
     parser.add_argument('--step_mul', default=8)
     parser.add_argument('--max_episode_step', default=200)
@@ -175,11 +194,11 @@ if __name__=="__main__" :
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
     parser.add_argument('--buffer_size', default=100000)
-    parser.add_argument('--minibatch_size', default=86)
+    parser.add_argument('--minibatch_size', default=64)
     parser.add_argument('--load_model', default=True)
-    parser.add_argument('-saved_model_directory', default='./results/save_model/900_ep')
+    parser.add_argument('-saved_model_directory', default='./results/save_model/100_ep')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=10000)
+    parser.add_argument('--train_start', default=1000)
 
     parser.add_argument('--actor_lr', default=0.001)
     parser.add_argument('--critic_lr', default=0.01)

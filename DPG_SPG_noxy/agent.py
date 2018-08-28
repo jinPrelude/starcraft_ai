@@ -74,7 +74,7 @@ class actorNetwork() :
         self.action_dim = action_dim
         self.action_bound = action_bound
         self.tau = tau
-        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.array([5., 5.]), sigma=5)
+        self.action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.action_dim), sigma=5)
         self.descrete_action_dim = 4
         self.descrete_action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(self.descrete_action_dim), sigma=0.5)
         self.batch_size = batch_size
@@ -116,25 +116,23 @@ class actorNetwork() :
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
         init = tf.contrib.layers.xavier_initializer()
         conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
         conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
 
         w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32,
                              initializer=init)
         l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.tanh(l1)
+        l1 = tf.nn.leaky_relu(l1)
 
-        w2 = tf.get_variable(name='w2', shape=[100, 2], dtype=tf.float32,
+        w2 = tf.get_variable(name='w2', shape=[100, 1], dtype=tf.float32,
                              initializer=init)
         l2 = tf.matmul(l1, w2)
-        out = tf.nn.tanh(l2)
-        out = tf.multiply(out, self.action_bound)
-        out = tf.add(out, 32.)
+        out = tf.nn.leaky_relu(l2)
 
 
         return inputs, out, l2
@@ -155,7 +153,7 @@ class actorNetwork() :
         out[0] += self.action_noise()
 
         out = out.astype(int)
-        out = np.clip(out, 1, 63)
+        #out = np.clip(out, 1, 4095)
         """
         for k in range(out.shape[0]) :
             outtf.clip_by_value(out[k][0], 1, 63)
@@ -163,13 +161,8 @@ class actorNetwork() :
             """
         #action = postprocessing(s, out[0][0], out[0][1], available_action)
         if random :
-            out = np.random.uniform(10, 53, (1, 2))
-            out = out.astype(int)
+            out = np.random.randint(1, 4095)
 
-            out_descrete = np.random.randint(0, 3, (1))  #
-            one_hot = np.zeros((np.shape(out_descrete)[0], 4))
-            for t in range(np.shape(one_hot)[0]):
-                one_hot[t][out_descrete[t]] = 1
 
         return out
 
@@ -181,7 +174,7 @@ class actorNetwork() :
         out[0] += self.action_noise()
 
         out = out.astype(int)
-        out = np.clip(out, 1, 63)
+        out = np.clip(out, 1, 4095)
 
         return out
 
@@ -228,34 +221,35 @@ class actorNetwork_SPG():
         inputs = tf.placeholder(tf.float32, shape=[None, self.screen_size, self.screen_size, 4])
         init = tf.contrib.layers.xavier_initializer()
         conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
         conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
 
         w1 = tf.get_variable(name='w1_SPG', shape=[64 * 64, 100], dtype=tf.float32,
                              initializer=init)
         l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.tanh(l1)
+        l1 = tf.nn.leaky_relu(l1)
 
         w2 = tf.get_variable(name='w2_SPG', shape=[100, 4], dtype=tf.float32,
                              initializer=init)
         l2 = tf.matmul(l1, w2)
-        out = tf.nn.tanh(l2)
+        out = tf.nn.leaky_relu(l2)
         out = tf.nn.softmax(out)
 
         return inputs, out
 
     def train(self, inputs, advantage, select):
 
-        self.sess.run(self.optimize, feed_dict={
+        loss, _ = self.sess.run([self.loss, self.optimize], feed_dict={
             self.inputs: inputs,
             self.advantage : advantage,
             self.select : select
         })
+        return loss
 
     def predict(self, s):
         # s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
@@ -315,26 +309,26 @@ class criticNetwork(object):
         actions = tf.placeholder(tf.float32, shape=[None, self.action_dim])
 
         conv1 = tf.layers.conv2d(inputs=inputs, filters=8, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
         conv2 = tf.layers.conv2d(inputs=conv1, filters=16, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
         conv3 = tf.layers.conv2d(inputs=conv2, filters=1, kernel_size=[3, 3], padding='same',
-                                 activation=tf.nn.tanh)
+                                 activation=tf.nn.leaky_relu)
 
         conv_flat = tf.layers.flatten(conv3)
         init = tf.contrib.layers.xavier_initializer()
         w1 = tf.get_variable(name='w1', shape=[64 * 64, 100], dtype=tf.float32, initializer=init)
         l1 = tf.matmul(conv_flat, w1)
-        l1 = tf.nn.tanh(l1)
+        l1 = tf.nn.leaky_relu(l1)
 
         w2 = tf.get_variable(name='w2', shape=[100, 50], dtype=tf.float32, initializer=init)
         l2_tmp = tf.matmul(l1, w2)
 
-        w1_a = tf.get_variable(name='w1_a', shape=[2, 50], dtype=tf.float32, initializer=init)
+        w1_a = tf.get_variable(name='w1_a', shape=[1, 50], dtype=tf.float32, initializer=init)
         l1_a = tf.matmul(actions, w1_a)
 
         l2 = tf.add(l2_tmp, l1_a)
-        l2 = tf.nn.tanh(l2)
+        l2 = tf.nn.leaky_relu(l2)
 
         w3 = tf.get_variable(name='w3', shape=[50, 1], dtype=tf.float32, initializer=init)
         out = tf.matmul(l2, w3)
@@ -351,7 +345,7 @@ class criticNetwork(object):
     def predict(self, s, action):
 
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
-        action = np.reshape(action, (-1, 2))
+        action = np.reshape(action, (-1, self.action_dim))
         q = self.sess.run(self.out, feed_dict={
             self.inputs: s,
             self.actions : action
@@ -361,7 +355,7 @@ class criticNetwork(object):
     def target_predict(self, s, action):
         #s = s[:,:,:,np.newaxis]
         #s = np.reshape(s, (-1, self.screen_size, self.screen_size, 4))
-        action = np.reshape(action, (-1, 2))
+        action = np.reshape(action, (-1, self.action_dim))
         q = self.sess.run(self.target_out, feed_dict={
             self.target_inputs: s,
             self.target_actions : action

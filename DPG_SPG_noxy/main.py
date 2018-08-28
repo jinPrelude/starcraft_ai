@@ -4,10 +4,10 @@ import numpy as np
 from collections import deque
 from pysc2.env import sc2_env
 from pysc2.lib import actions
-from DPG_SPG.agent import actorNetwork, criticNetwork, actorNetwork_SPG
+from DPG_SPG_noxy.agent import actorNetwork, criticNetwork, actorNetwork_SPG
 from absl import flags
 import sys
-from DPG_SPG.replay_buffer import ReplayBuffer
+from DPG_SPG_noxy.replay_buffer import ReplayBuffer
 
 def act(out_descrete, available_action, coordinate) :
     dim = out_descrete.size
@@ -50,8 +50,9 @@ def build_summaries():
     tf.summary.scalar("Reward", episode_reward)
     episode_ave_max_q = tf.Variable(0.)
     tf.summary.scalar("Qmax Value", episode_ave_max_q)
-
-    summary_vars = [episode_reward, episode_ave_max_q]
+    episode_SPG_loss = tf.Variable(0.)
+    tf.summary.scalar("actor_SPG_loss", episode_SPG_loss)
+    summary_vars = [episode_reward, episode_ave_max_q, episode_SPG_loss]
     summary_ops = tf.summary.merge_all()
 
     return summary_ops, summary_vars
@@ -79,6 +80,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
 
         episode_reward = 0
         episode_max_q = 0
+        episode_loss = 0
 
         # reset state
         state = env.reset()
@@ -96,10 +98,20 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
 
             state_stack_arr = np.asarray(state_stack) # Change type to save relay_buffer and treat easily, shape=(4, 64, 64)
             state_stack_arr = np.reshape(state_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
-            a_coordinate = actor.predict(state_stack_arr, (replay_buffer.size() < args['train_start']))
+            a_raw = actor.predict(state_stack_arr, (replay_buffer.size() < args['train_start']))
             a_select, a_select_prob = actor_SPG.predict(state_stack_arr)
             #print(a_raw)
             #타입 맞춰주기용
+
+            reward = 0
+
+            if (a_raw > 4094) or (a_raw < 2):
+                reward = -500
+                a_raw = np.clip(a_raw, 1, 4095)
+
+            x = int(a_raw / 64)
+            y = int(a_raw % 64)
+            a_coordinate = np.array([[x, y]])
             a = act(a_select, available_action, a_coordinate)
             a = [a]
 
@@ -107,7 +119,8 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             available_action = state2[0].observation.available_actions
 
             # Add to replay buffer
-            r = state2[0].reward
+            r = state2[0].reward + reward
+
             terminal = state2[0].last()
             state2 = state2[0].observation.feature_screen[5]
 
@@ -117,7 +130,7 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             state2_stack_arr = np.asarray(state2_stack)
             state2_stack_arr = np.reshape(state2_stack_arr, (-1, args['screen_size'], args['screen_size'], 4))
 
-            replay_buffer.add(state_stack_arr, a_coordinate[0], a_select, r, terminal, state2_stack_arr)
+            replay_buffer.add(state_stack_arr, [a_raw], a_select, r, terminal, state2_stack_arr)
 
             #print('state_stack shape : ', np.shape(state_stack_arr), '  | reward : ', r, '  action : ', a_raw,
             #      ' | predicted_q : ', critic.predict(state_stack_arr, a_raw, a_descrete))
@@ -158,8 +171,8 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
                 advantage = np.asarray(advantage)
                 advantage = np.reshape(advantage, (args['minibatch_size'], 1))
 
-                actor_SPG.train(s_batch, advantage, select_batch)
-
+                loss = actor_SPG.train(s_batch, advantage, select_batch)
+                episode_loss += loss
                 actor.update_target_actor_network()
                 critic.update_target_critic_network()
 
@@ -169,7 +182,8 @@ def train(sess, env, actor, actor_SPG, critic, args, replay_buffer) :
             if terminal:
                 summary_str = sess.run(summary_ops, feed_dict={
                     summary_vars[0]: episode_reward,
-                    summary_vars[1]: episode_max_q / float(step)
+                    summary_vars[1]: episode_max_q / float(step),
+                    summary_vars[2]: episode_loss / float(step)
                 })
 
                 writer.add_summary(summary_str, episode)
@@ -208,7 +222,7 @@ def main(args) :
                                  args['tau'], args['minibatch_size'], args['actor_lr'])
 
             actor_SPG = actorNetwork_SPG(sess, args['screen_size'], args['action_dim'], action_bound,
-                                 args['tau'], args['minibatch_size'], args['actor_lr'], actor.get_trainable_params_num())
+                                 args['tau'], args['minibatch_size'], args['actor_SPG_lr'], actor.get_trainable_params_num())
 
             # sess, screen_size, action_dim, learning_rate, tau, gamma, num_actor_vars, minibatch_size
             critic = criticNetwork(sess, args['screen_size'], actor.get_trainable_params_num(),
@@ -227,21 +241,22 @@ if __name__=="__main__" :
 
     parser.add_argument('--map_name', default='DefeatRoaches')
     parser.add_argument('--screen_size', default=64)
-    parser.add_argument('--action_dim', default=2)
+    parser.add_argument('--action_dim', default=1)
     parser.add_argument('--minimap_size', default=64)
     parser.add_argument('--step_mul', default=8)
     parser.add_argument('--max_episode_step', default=200)
     parser.add_argument('--episode', default=100000)
     parser.add_argument('--tau', default=0.01)
     parser.add_argument('--gamma', default=0.99)
-    parser.add_argument('--buffer_size', default=100000)
-    parser.add_argument('--minibatch_size', default=86)
+    parser.add_argument('--buffer_size', default=10000)
+    parser.add_argument('--minibatch_size', default=64)
     parser.add_argument('--load_model', default=False)
     parser.add_argument('-saved_model_directory', default='./results/save_model')
     parser.add_argument('--summary_dir', default='./results/tensorboard')
-    parser.add_argument('--train_start', default=10000)
+    parser.add_argument('--train_start', default=2000)
 
-    parser.add_argument('--actor_lr', default=0.001)
+    parser.add_argument('--actor_lr', default=0.01)
+    parser.add_argument('--actor_SPG_lr', default=0.0005)
     parser.add_argument('--critic_lr', default=0.01)
 
     flags.FLAGS(sys.argv)
